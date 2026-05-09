@@ -1,0 +1,347 @@
+const router = require('express').Router();
+const { PrismaClient } = require('@prisma/client');
+const XLSX = require('xlsx');
+const https = require('https');
+const prisma = new PrismaClient();
+
+router.get('/stock', async (req, res) => {
+  const { warehouseId, format } = req.query;
+  const where = warehouseId ? { warehouseId: +warehouseId } : {};
+  const stock = await prisma.stock.findMany({
+    where,
+    include: { product: { include: { category: true } }, warehouse: true }
+  });
+
+  if (format === 'excel') {
+    const data = stock.map(s => ({
+      'Склад': s.warehouse.name,
+      'SKU': s.product.sku,
+      'Наименование': s.product.name,
+      'Категория': s.product.category?.name || '',
+      'Ед.изм.': s.product.unit,
+      'Количество': s.quantity,
+      'Цена продажи': s.product.price,
+      'Средняя себест.': s.avgCost,
+      'Сумма': s.quantity * s.avgCost,
+      'Мин. остаток': s.product.minStock,
+      'Статус': s.quantity <= s.product.minStock ? 'Мало' : 'OK'
+    }));
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, 'Остатки');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="stock.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    return res.send(buf);
+  }
+
+  res.json(stock);
+});
+
+router.get('/movements', async (req, res) => {
+  const { warehouseId, from, to, format } = req.query;
+  const dateFilter = {};
+  if (from) dateFilter.gte = new Date(from);
+  if (to) dateFilter.lte = new Date(to);
+
+  const [receipts, issues] = await Promise.all([
+    prisma.receipt.findMany({
+      where: { warehouseId: warehouseId ? +warehouseId : undefined, status: 'confirmed', date: Object.keys(dateFilter).length ? dateFilter : undefined },
+      include: { supplier: true, warehouse: true, items: { include: { product: true } }, user: { select: { fullName: true } } }
+    }),
+    prisma.issue.findMany({
+      where: { warehouseId: warehouseId ? +warehouseId : undefined, status: 'confirmed', date: Object.keys(dateFilter).length ? dateFilter : undefined },
+      include: { warehouse: true, items: { include: { product: true } }, user: { select: { fullName: true } } }
+    })
+  ]);
+
+  if (format === 'excel') {
+    const rows = [];
+    for (const r of receipts) {
+      for (const item of r.items) {
+        rows.push({ Тип: 'Приход', Дата: r.date, Склад: r.warehouse.name, Контрагент: r.supplier?.name || '', Товар: item.product.name, SKU: item.product.sku, Количество: item.quantity, Цена: item.costPerUnit, Сумма: item.quantity * item.costPerUnit, Пользователь: r.user.fullName });
+      }
+    }
+    for (const i of issues) {
+      for (const item of i.items) {
+        rows.push({ Тип: 'Расход', Дата: i.date, Склад: i.warehouse.name, Контрагент: i.recipient || '', Товар: item.product.name, SKU: item.product.sku, Количество: item.quantity, Цена: '', Сумма: '', Пользователь: i.user.fullName });
+      }
+    }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Движение');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="movements.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    return res.send(buf);
+  }
+
+  res.json({ receipts, issues });
+});
+
+router.get('/dashboard', async (req, res) => {
+  const { warehouseId } = req.query;
+  const wFilter = warehouseId ? { warehouseId: +warehouseId } : {};
+
+  const [totalProducts, totalReceipts, totalIssues, stock, lowStock] = await Promise.all([
+    prisma.product.count(),
+    prisma.receipt.count({ where: { ...wFilter, status: 'confirmed' } }),
+    prisma.issue.count({ where: { ...wFilter, status: 'confirmed' } }),
+    prisma.stock.findMany({ where: wFilter, include: { product: true } }),
+    prisma.stock.findMany({ where: wFilter, include: { product: true } })
+  ]);
+
+  const totalValue = stock.reduce((sum, s) => sum + s.quantity * s.avgCost, 0);
+  const lowStockCount = lowStock.filter(s => s.quantity <= s.product.minStock).length;
+
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const recentReceipts = await prisma.receipt.count({ where: { ...wFilter, status: 'confirmed', date: { gte: weekAgo } } });
+  const recentIssues = await prisma.issue.count({ where: { ...wFilter, status: 'confirmed', date: { gte: weekAgo } } });
+
+  res.json({ totalProducts, totalReceipts, totalIssues, totalValue, lowStockCount, recentReceipts, recentIssues });
+});
+
+// Helper: send a message via Telegram
+async function sendTelegramMessage(text) {
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8752510903:AAG96QJx3X4Ve8OAAcCBiV_oWh28bBzziT4';
+  const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+  if (!CHAT_ID) throw new Error('TELEGRAM_CHAT_ID не настроен. Напишите боту /start и добавьте ваш Chat ID в переменную окружения.');
+
+  const payload = JSON.stringify({ chat_id: CHAT_ID, text, parse_mode: 'Markdown' });
+  const options = {
+    hostname: 'api.telegram.org',
+    path: `/bot${BOT_TOKEN}/sendMessage`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+  };
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (response) => {
+      let data = '';
+      response.on('data', chunk => data += chunk);
+      response.on('end', () => {
+        const result = JSON.parse(data);
+        if (result.ok) resolve(result);
+        else reject(new Error(result.description || 'Telegram error: ' + data));
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+// Send receipt (single sale) to Telegram — called from POS after each sale
+router.post('/telegram/receipt', async (req, res) => {
+  const { receipt } = req.body;
+  if (!receipt) return res.status(400).json({ error: 'Нет данных чека' });
+
+  const fmt = (n) => Number(n).toFixed(2);
+  const dateStr = new Date(receipt.date).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  let text = `🧾 *Кассовый чек #${receipt.id}*\n`;
+  text += `🏪 ${receipt.warehouse}\n`;
+  text += `📅 ${dateStr}\n`;
+  text += `━━━━━━━━━━━━━━━━━\n`;
+  for (const item of receipt.items) {
+    text += `👟 *${item.name}*\n`;
+    text += `   ${fmt(item.quantity)} ${item.unit} × ${fmt(item.price)} сом = *${fmt(item.total)} сом*\n`;
+  }
+  text += `━━━━━━━━━━━━━━━━━\n`;
+  text += `💰 *ИТОГО: ${fmt(receipt.total)} сом*\n`;
+  text += `💳 Оплата \(${receipt.paymentMethod}\): ${fmt(receipt.amountPaid)} сом\n`;
+  if (receipt.change > 0) text += `🔄 Сдача: ${fmt(receipt.change)} сом\n`;
+  text += `━━━━━━━━━━━━━━━━━\n`;
+  text += `👤 Кассир: ${receipt.cashier}`;
+
+  try {
+    await sendTelegramMessage(text);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Send daily sales report to Telegram
+router.post('/telegram', async (req, res) => {
+  const { warehouseId } = req.body;
+  const login = req.user.login;
+  const fullName = req.user.fullName;
+
+  const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+  // Today range
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
+
+  const wFilter = warehouseId ? { warehouseId: +warehouseId } : {};
+
+  // Get today's confirmed issues (sales)
+  const issues = await prisma.issue.findMany({
+    where: { ...wFilter, status: 'confirmed', date: { gte: todayStart, lte: todayEnd } },
+    include: {
+      items: { include: { product: true } },
+      warehouse: true
+    }
+  });
+
+  // Get today's POS sales (issues with POS notes)
+  const posIssues = issues.filter(i => i.notes && i.notes.includes('POS'));
+  const regularIssues = issues.filter(i => !i.notes || !i.notes.includes('POS'));
+
+  // Calculate totals from POS sales (price is stored in notes)
+  let totalRevenue = 0;
+  let soldItems = [];
+
+  for (const issue of posIssues) {
+    // Parse price from notes: "POS | Оплата: наличные | Сдача: X.XX"
+    // Revenue = amountPaid - change, but we need to sum item prices
+    for (const item of issue.items) {
+      soldItems.push({ name: item.product.name, sku: item.product.sku, qty: item.quantity, price: item.product.salePrice });
+      totalRevenue += item.quantity * item.product.salePrice;
+    }
+  }
+
+  // Also count regular issues
+  const totalIssuesCount = issues.length;
+  const totalItemsSold = issues.reduce((s, i) => s + i.items.reduce((ss, it) => ss + it.quantity, 0), 0);
+
+  // Group sold items
+  const grouped = {};
+  for (const item of soldItems) {
+    const key = item.sku;
+    if (!grouped[key]) grouped[key] = { name: item.name, qty: 0, revenue: 0 };
+    grouped[key].qty += item.qty;
+    grouped[key].revenue += item.qty * item.price;
+  }
+
+  const warehouseName = issues[0]?.warehouse?.name || (warehouseId ? `Склад #${warehouseId}` : 'Все склады');
+  const dateStr = new Date().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  let text = `📊 *Отчёт за ${dateStr}*\n`;
+  text += `🏪 Склад: ${warehouseName}\n`;
+  text += `👤 Отправил: ${fullName} (@${login})\n`;
+  text += `─────────────────\n`;
+  text += `📦 Продаж (расходов): ${totalIssuesCount}\n`;
+  text += `👟 Пар продано: ${totalItemsSold}\n`;
+
+  if (Object.keys(grouped).length > 0) {
+    text += `💰 Выручка (POS): ${totalRevenue.toLocaleString('ru-RU')} сом\n`;
+    text += `─────────────────\n`;
+    text += `*Топ товаров:*\n`;
+    const sorted = Object.values(grouped).sort((a, b) => b.qty - a.qty).slice(0, 10);
+    for (const item of sorted) {
+      text += `• ${item.name}: ${item.qty} пар — ${item.revenue.toLocaleString('ru-RU')} сом\n`;
+    }
+  } else {
+    text += `─────────────────\n`;
+    text += `ℹ️ Продажи через POS не найдены\n`;
+  }
+
+  text += `─────────────────\n`;
+  text += `⏰ ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+
+  try {
+    await sendTelegramMessage(text);
+    res.json({ ok: true, message: 'Отчёт отправлен в Telegram' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// Продажи по размерам
+router.get('/analytics/sales-by-size', async (req, res) => {
+  const { warehouseId, from, to } = req.query;
+  const where = { status: 'completed' };
+  if (warehouseId) where.warehouseId = +warehouseId;
+  if (from || to) {
+    where.createdAt = {};
+    if (from) where.createdAt.gte = new Date(from);
+    if (to) where.createdAt.lte = new Date(to);
+  }
+
+  const items = await prisma.saleItem.findMany({
+    where: { sale: where },
+    include: { product: { select: { size: true, brand: true, name: true, salePrice: true } }, sale: { select: { createdAt: true } } }
+  });
+
+  const bySize = {};
+  for (const item of items) {
+    const key = `${item.product.size || 'н/д'} | ${item.product.brand || ''}`;
+    if (!bySize[key]) bySize[key] = { size: item.product.size, brand: item.product.brand, qty: 0, revenue: 0 };
+    bySize[key].qty += item.quantity;
+    bySize[key].revenue += item.total;
+  }
+
+  res.json(Object.values(bySize).sort((a, b) => b.qty - a.qty));
+});
+
+// Маржинальность по SKU
+router.get('/analytics/margin', async (req, res) => {
+  const { warehouseId, from, to } = req.query;
+  const where = { status: 'completed' };
+  if (warehouseId) where.warehouseId = +warehouseId;
+
+  const items = await prisma.saleItem.findMany({
+    where: { sale: where },
+    include: { product: { select: { sku: true, name: true, brand: true, size: true } } }
+  });
+
+  const byProduct = {};
+  for (const item of items) {
+    const key = item.productId;
+    if (!byProduct[key]) {
+      byProduct[key] = { productId: key, sku: item.product.sku, name: item.product.name, brand: item.product.brand, size: item.product.size, qty: 0, revenue: 0, cost: 0, margin: 0 };
+    }
+    byProduct[key].qty += item.quantity;
+    byProduct[key].revenue += item.total;
+    byProduct[key].cost += item.quantity * item.costPrice;
+  }
+
+  for (const p of Object.values(byProduct)) {
+    p.margin = p.revenue - p.cost;
+    p.marginPct = p.revenue > 0 ? ((p.margin / p.revenue) * 100).toFixed(1) : 0;
+  }
+
+  res.json(Object.values(byProduct).sort((a, b) => b.margin - a.margin));
+});
+
+// Медленно продаваемые товары
+router.get('/analytics/slow-movers', async (req, res) => {
+  const { warehouseId, days } = req.query;
+  const since = new Date(Date.now() - (days || 30) * 24 * 60 * 60 * 1000);
+
+  const stock = await prisma.stock.findMany({
+    where: warehouseId ? { warehouseId: +warehouseId } : {},
+    include: { product: true, warehouse: true }
+  });
+
+  const sold = await prisma.saleItem.groupBy({
+    by: ['productId'],
+    where: { sale: { createdAt: { gte: since }, ...(warehouseId ? { warehouseId: +warehouseId } : {}) } },
+    _sum: { quantity: true }
+  });
+  const soldMap = {};
+  for (const s of sold) soldMap[s.productId] = s._sum.quantity;
+
+  const result = stock
+    .map(s => ({
+      productId: s.productId,
+      sku: s.product.sku,
+      name: s.product.name,
+      brand: s.product.brand,
+      size: s.product.size,
+      warehouse: s.warehouse.name,
+      stockQty: s.quantity,
+      soldQty: soldMap[s.productId] || 0,
+      avgCost: s.avgCost,
+      stockValue: s.quantity * s.avgCost
+    }))
+    .filter(s => s.stockQty > 0)
+    .sort((a, b) => a.soldQty - b.soldQty);
+
+  res.json(result);
+});
+
+module.exports = router;
