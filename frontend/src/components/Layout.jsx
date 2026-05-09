@@ -4,13 +4,15 @@ import { useAuth } from '../hooks/useAuth.jsx';
 import {
   LayoutDashboard, Package, ArrowDownCircle, ArrowUpCircle,
   Warehouse, Users, BarChart2, Settings, LogOut, ShoppingCart,
-  Truck, Layers, Menu, X, ArrowLeftRight, CalendarDays
+  Truck, Layers, Menu, ArrowLeftRight, CalendarDays,
+  RotateCcw, ClipboardList, Clock
 } from 'lucide-react';
 
 const navItems = [
   { section: 'Основное', items: [
     { to: '/', icon: LayoutDashboard, label: 'Дашборд', exact: true },
     { to: '/pos', icon: ShoppingCart, label: 'Касса / POS' },
+    { to: '/shifts', icon: Clock, label: 'Смены' },
   ]},
   { section: 'Склад', items: [
     { to: '/products', icon: Package, label: 'Товары' },
@@ -18,9 +20,11 @@ const navItems = [
     { to: '/receipts', icon: ArrowDownCircle, label: 'Приход' },
     { to: '/issues', icon: ArrowUpCircle, label: 'Расход' },
     { to: '/transfers', icon: ArrowLeftRight, label: 'Перемещение' },
+    { to: '/returns', icon: RotateCcw, label: 'Возвраты' },
     { to: '/suppliers', icon: Truck, label: 'Поставщики' },
   ]},
   { section: 'Управление', items: [
+    { to: '/inventory', icon: ClipboardList, label: 'Инвентаризация', roles: ['admin', 'manager'] },
     { to: '/warehouses', icon: Warehouse, label: 'Склады', roles: ['admin'] },
     { to: '/users', icon: Users, label: 'Пользователи', roles: ['admin'] },
     { to: '/reports', icon: BarChart2, label: 'Отчёты' },
@@ -43,23 +47,23 @@ export default function Layout() {
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
+  const Logo = () => (
+    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+      <img
+        src="/logo-wh365.jpg"
+        alt="Warehouse365"
+        style={{ height:36, width:'auto', borderRadius:6, objectFit:'contain' }}
+        onError={e => { e.target.style.display='none'; }}
+      />
+    </div>
+  );
+
   const SidebarContent = () => (
     <>
-      {/* Logo */}
-      <div className="sidebar-logo">
-        <div className="logo-mark">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" stroke="#0b0f1a" strokeWidth="2.5" strokeLinejoin="round"/>
-            <path d="M9 22V12h6v10" stroke="#0b0f1a" strokeWidth="2.5" strokeLinejoin="round"/>
-          </svg>
-        </div>
-        <div>
-          <div className="logo-name">Warhouse<span style={{color:'var(--accent)'}}>365</span></div>
-          <div className="logo-sub">Складской учёт</div>
-        </div>
+      <div className="sidebar-logo" style={{ padding:'0 14px', height:64 }}>
+        <Logo />
       </div>
 
-      {/* Nav */}
       <nav className="sidebar-nav">
         {navItems.map(section => (
           <div key={section.section} className="nav-section">
@@ -83,7 +87,6 @@ export default function Layout() {
         ))}
       </nav>
 
-      {/* User */}
       <div className="sidebar-user">
         <div className="user-card">
           <div className="user-name">{user?.fullName}</div>
@@ -122,7 +125,9 @@ export default function Layout() {
             <Menu size={18} />
           </button>
           <style>{`@media (max-width: 768px) { #mobile-menu-btn { display: flex !important; } }`}</style>
-          <div className="topbar-title" id="page-title">Warhouse365</div>
+          <div className="topbar-title" id="page-title" style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <img src="/logo-wh365.jpg" alt="WH365" style={{ height:26, width:'auto', borderRadius:4, objectFit:'contain' }} onError={e=>e.target.style.display='none'} />
+          </div>
           <div className="topbar-actions">
             {user?.warehouse && (
               <span style={{ fontSize:12, color:'var(--text3)', display:'flex', alignItems:'center', gap:4 }}>

@@ -19,6 +19,9 @@ import TransfersPage from './pages/TransfersPage.jsx';
 import DiskAlert from './components/DiskAlert.jsx';
 import TariffReminder from './components/TariffReminder.jsx';
 import CalendarPage from './pages/CalendarPage.jsx';
+import ShiftsPage from './pages/ShiftsPage.jsx';
+import ReturnsPage from './pages/ReturnsPage.jsx';
+import InventoryPage from './pages/InventoryPage.jsx';
 
 function ProtectedRoute({ children, roles }) {
   const { user, loading } = useAuth();
@@ -46,6 +49,9 @@ function AppRoutes() {
           <Route path="pos" element={<POSPage />} />
           <Route path="reports" element={<ReportsPage />} />
           <Route path="transfers" element={<TransfersPage />} />
+          <Route path="shifts" element={<ShiftsPage />} />
+          <Route path="returns" element={<ReturnsPage />} />
+          <Route path="inventory" element={<ProtectedRoute roles={['admin','manager']}><InventoryPage /></ProtectedRoute>} />
           <Route path="warehouses" element={<ProtectedRoute roles={['admin']}><WarehousesPage /></ProtectedRoute>} />
           <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
           <Route path="system" element={<ProtectedRoute roles={['admin']}><SystemPage /></ProtectedRoute>} />
