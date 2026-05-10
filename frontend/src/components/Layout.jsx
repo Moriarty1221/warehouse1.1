@@ -17,7 +17,7 @@ const navItems = [
   { section: 'Склад', items: [
     { to: '/products', icon: Package, label: 'Товары' },
     { to: '/stock', icon: Layers, label: 'Остатки' },
-    { to: '/receipts', icon: ArrowDownCircle, label: 'Приход' },
+    { to: '/receipts', icon: ArrowDownCircle, label: 'Приходы' },
     { to: '/issues', icon: ArrowUpCircle, label: 'Расход' },
     { to: '/transfers', icon: ArrowLeftRight, label: 'Перемещение' },
     { to: '/returns', icon: RotateCcw, label: 'Возвраты' },

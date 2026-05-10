@@ -23,7 +23,7 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { warehouseId, supplierId, notes, items } = req.body;
+  const { warehouseId, supplierId, notes, items, autoConfirm } = req.body;
   const receipt = await prisma.receipt.create({
     data: {
       warehouseId, supplierId: supplierId || null,
@@ -32,6 +32,37 @@ router.post('/', async (req, res) => {
     },
     include: { items: { include: { product: true } } }
   });
+
+  // Если autoConfirm=true — сразу подтверждаем и зачисляем на остатки
+  if (autoConfirm) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        for (const item of receipt.items) {
+          const stock = await tx.stock.findUnique({
+            where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } }
+          });
+          let newAvgCost = item.costPerUnit;
+          if (stock && stock.quantity > 0) {
+            newAvgCost = (stock.quantity * stock.avgCost + item.quantity * item.costPerUnit) / (stock.quantity + item.quantity);
+          }
+          await adjustStock(tx, {
+            productId: item.productId, warehouseId: receipt.warehouseId,
+            delta: item.quantity, type: 'receipt', docType: 'Receipt', docId: receipt.id
+          });
+          await tx.stock.update({
+            where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } },
+            data: { avgCost: newAvgCost }
+          });
+        }
+        await tx.receipt.update({ where: { id: receipt.id }, data: { status: 'confirmed' } });
+      });
+      return res.json({ ...receipt, status: 'confirmed', autoConfirmed: true });
+    } catch (err) {
+      // Приход создан но не подтверждён — вернём как черновик
+      return res.json({ ...receipt, confirmError: err.message });
+    }
+  }
+
   res.json(receipt);
 });
 

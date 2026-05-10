@@ -197,7 +197,12 @@ export default function ReceiptsPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 13, color: 'var(--text3)', maxWidth: 560, lineHeight: 1.5 }}>
+          📦 Здесь фиксируются <strong>приходы существующих товаров</strong> — от поставщиков, возвраты от покупателей и пополнения склада.
+          <br />
+          <span style={{ color: 'var(--accent)', fontSize: 12 }}>Новый товар добавить вместе с приходом → раздел «Товары» → Добавить товар → вкладка «Сделать приход»</span>
+        </div>
         <button className="btn btn-primary" onClick={() => setModal(true)}><Plus size={15} /> Новый приход</button>
       </div>
 

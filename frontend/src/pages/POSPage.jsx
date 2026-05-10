@@ -321,7 +321,9 @@ export default function POSPage() {
     setCart(prev => {
       const ex = prev.find(i => i.productId === product.id);
       if (ex) return prev.map(i => i.productId === product.id ? { ...i, qty: i.qty + 1 } : i);
-      return [...prev, { productId: product.id, name: product.name, sku: product.sku, unit: product.unit, price: product.price || 0, qty: 1 }];
+      // Use salePrice (backend field). product.price is legacy alias from some responses.
+      const price = product.salePrice || product.price || 0;
+      return [...prev, { productId: product.id, name: product.name, sku: product.sku, unit: product.unit, price, qty: 1 }];
     });
   };
 
@@ -348,7 +350,7 @@ export default function POSPage() {
         method: 'POST',
         body: JSON.stringify({
           warehouseId: +warehouseId,
-          items: cart.map(i => ({ productId: i.productId, quantity: i.qty, price: i.price })),
+          items: cart.map(i => ({ productId: i.productId, quantity: i.qty, salePrice: i.price, costPrice: 0 })),
           cashierName: user?.fullName,
           paymentMethod: method,
           amountPaid
@@ -448,7 +450,7 @@ export default function POSPage() {
               <div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3, marginBottom: 4 }}>{p.name}</div>
               <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace' }}>{p.sku}</div>
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent2)', marginTop: 6 }}>
-                {fmt(p.price || 0)} сом
+                {fmt(p.salePrice || p.price || 0)} сом
               </div>
               {warehouseId && (
                 <div style={{ fontSize: 10, color: hasStock ? 'var(--green)' : 'var(--red)', marginTop: 2 }}>

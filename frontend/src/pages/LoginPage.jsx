@@ -31,32 +31,49 @@ export default function LoginPage() {
       background: 'var(--bg)',
       backgroundImage: 'radial-gradient(ellipse 60% 50% at 50% -20%, rgba(0,212,170,0.07) 0%, transparent 60%)',
     }}>
-      <div style={{ width: '100%', maxWidth: 360, padding: '0 20px' }}>
+      <div style={{ width: '100%', maxWidth: 380, padding: '0 20px' }}>
 
-        {/* Brand */}
+        {/* Brand / Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{
-            width: 52, height: 52,
-            background: 'var(--accent)', borderRadius: 14,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 16px',
+            marginBottom: 16,
           }}>
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-              <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" stroke="#0b0f1a" strokeWidth="2.5" strokeLinejoin="round"/>
-              <path d="M9 22V12h6v10" stroke="#0b0f1a" strokeWidth="2.5" strokeLinejoin="round"/>
-            </svg>
+            <img
+              src="/logo-wh365.jpg"
+              alt="Warehouse365"
+              style={{
+                height: 90, width: 'auto',
+                borderRadius: 16,
+                objectFit: 'contain',
+                boxShadow: '0 4px 24px rgba(0,212,170,0.18)',
+              }}
+              onError={e => {
+                e.target.style.display = 'none';
+                document.getElementById('login-fallback-logo').style.display = 'flex';
+              }}
+            />
+            <div id="login-fallback-logo" style={{
+              display: 'none',
+              width: 72, height: 72,
+              background: 'linear-gradient(135deg, var(--accent), var(--accent2))',
+              borderRadius: 18,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+                <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" stroke="#0b0f1a" strokeWidth="2.5" strokeLinejoin="round"/>
+                <path d="M9 22V12h6v10" stroke="#0b0f1a" strokeWidth="2.5" strokeLinejoin="round"/>
+              </svg>
+            </div>
           </div>
-          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.3px' }}>
-            Warhouse<span style={{ color: 'var(--accent)' }}>365</span>
-          </div>
-          <div style={{ color: 'var(--text3)', fontSize: 12, marginTop: 4 }}>
+          <div style={{ fontSize: 13, color: 'var(--text3)', marginTop: 4 }}>
             Система складского учёта
           </div>
         </div>
 
         {/* Card */}
-        <div className="card" style={{ padding: '24px' }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 18, color: 'var(--text2)' }}>
+        <div className="card" style={{ padding: '28px 24px' }}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, color: 'var(--text)', textAlign: 'center' }}>
             Вход в систему
           </div>
 
@@ -99,17 +116,17 @@ export default function LoginPage() {
             <button
               type="submit"
               className="btn btn-primary"
-              style={{ width: '100%', justifyContent: 'center', marginTop: 6 }}
+              style={{ width: '100%', justifyContent: 'center', marginTop: 8, padding: '11px 0', fontSize: 15 }}
               disabled={loading}
             >
-              <LogIn size={15} />
+              <LogIn size={16} />
               {loading ? 'Входим...' : 'Войти'}
             </button>
           </form>
         </div>
 
         <p style={{ textAlign: 'center', color: 'var(--text3)', fontSize: 11, marginTop: 18 }}>
-          Warhouse365 v2.0 • Складской учёт и касса
+          Warehouse365 v2.0 • Складской учёт и касса
         </p>
       </div>
     </div>
