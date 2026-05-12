@@ -360,8 +360,6 @@ module.exports = router;
 // POST /reports/telegram/:role
 // ============================================================
 
-const { requireRole } = require('../middleware/auth');
-
 // --- 8.2.0: Вспомогательные функции ---
 const fmt    = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0));
 const fmtDec = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
