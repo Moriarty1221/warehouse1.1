@@ -371,3 +371,12 @@ model AuditLog {
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id])
 }
+
+model TelegramSubscriber {
+  id        Int      @id @default(autoincrement())
+  chatId    String   @unique
+  username  String?
+  firstName String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
