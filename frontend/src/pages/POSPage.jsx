@@ -267,6 +267,7 @@ export default function POSPage() {
   const [payModal, setPayModal] = useState(false);
   const [receipt, setReceipt] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [currentShiftId, setCurrentShiftId] = useState(null);
   const scanRef = useRef('');
   const scanTimer = useRef(null);
   const scanInputRef = useRef(null);
@@ -275,6 +276,12 @@ export default function POSPage() {
     document.getElementById('page-title').textContent = 'Касса / POS';
     api('/products').then(setProducts);
     api('/warehouses').then(setWarehouses);
+    // Загружаем текущую смену чтобы привязывать продажи к ней
+    if (user?.warehouseId) {
+      api(`/shifts/current?warehouseId=${user.warehouseId}`)
+        .then(data => setCurrentShiftId(data?.shift?.id || null))
+        .catch(() => setCurrentShiftId(null));
+    }
 
     // Global barcode scanner listener (HID keyboard — fast input)
     const handleKey = (e) => {
@@ -404,7 +411,8 @@ export default function POSPage() {
           items: cart.map(i => ({ productId: i.productId, sizeId: i.sizeId || null, quantity: i.qty, salePrice: i.price, costPrice: 0 })),
           cashierName: user?.fullName,
           paymentMethod: method,
-          amountPaid
+          amountPaid,
+          shiftId: currentShiftId || null
         })
       });
       setCart([]);
