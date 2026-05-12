@@ -108,33 +108,42 @@ router.get('/dashboard', async (req, res) => {
   res.json({ totalProducts, totalReceipts, totalIssues, totalValue, lowStockCount, recentReceipts, recentIssues });
 });
 
-// Helper: send a message via Telegram
-async function sendTelegramMessage(text) {
-  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8752510903:AAG96QJx3X4Ve8OAAcCBiV_oWh28bBzziT4';
-  const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-  if (!CHAT_ID) throw new Error('TELEGRAM_CHAT_ID не настроен. Напишите боту /start и добавьте ваш Chat ID в переменную окружения.');
-
-  const payload = JSON.stringify({ chat_id: CHAT_ID, text, parse_mode: 'Markdown' });
+// Helper: отправить сообщение одному chat_id
+async function sendToChat(BOT_TOKEN, chatId, text) {
+  const payload = JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' });
   const options = {
     hostname: 'api.telegram.org',
     path: `/bot${BOT_TOKEN}/sendMessage`,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
   };
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const req = https.request(options, (response) => {
       let data = '';
       response.on('data', chunk => data += chunk);
-      response.on('end', () => {
-        const result = JSON.parse(data);
-        if (result.ok) resolve(result);
-        else reject(new Error(result.description || 'Telegram error: ' + data));
-      });
+      response.on('end', () => resolve(JSON.parse(data)));
     });
-    req.on('error', reject);
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
     req.write(payload);
     req.end();
   });
+}
+
+// Helper: отправить всем кто запустил бота (/start)
+async function sendTelegramMessage(text) {
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  if (!BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN не настроен');
+
+  // Получаем всех подписчиков из БД
+  const subscribers = await prisma.telegramSubscriber.findMany({ where: { active: true } });
+  if (subscribers.length === 0) throw new Error('Нет подписчиков. Напишите /start боту.');
+
+  const results = await Promise.all(
+    subscribers.map(s => sendToChat(BOT_TOKEN, s.chatId, text))
+  );
+  const failed = results.filter(r => !r.ok).length;
+  if (failed === results.length) throw new Error('Не удалось отправить ни одному подписчику');
+  return results;
 }
 
 // Send receipt (single sale) to Telegram — called from POS after each sale
@@ -359,6 +368,8 @@ module.exports = router;
 // Каждый эндпоинт формирует отчёт, специфичный для роли.
 // POST /reports/telegram/:role
 // ============================================================
+
+const { requireRole } = require('../middleware/auth');
 
 // --- 8.2.0: Вспомогательные функции ---
 const fmt    = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0));
