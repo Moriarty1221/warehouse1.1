@@ -179,9 +179,9 @@ function ReceiptModal({ receipt, onClose }) {
 // Payment modal
 // ──────────────────────────────────────────────
 function PaymentModal({ total, onPay, onClose }) {
-  const [method, setMethod] = useState('наличные');
+  const [method, setMethod] = useState('cash');
   const [paid, setPaid] = useState('');
-  const change = method === 'наличные' ? Math.max(0, (parseFloat(paid) || 0) - total) : 0;
+  const change = method === 'cash' ? Math.max(0, (parseFloat(paid) || 0) - total) : 0;
   const fmt = (n) => Number(n).toFixed(2);
 
   return (
@@ -197,20 +197,23 @@ function PaymentModal({ total, onPay, onClose }) {
           </div>
 
           <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-            {['наличные', 'карта', 'перевод'].map(m => (
+            {[
+              { value: 'cash',     label: 'Наличные', icon: <Banknote size={14} /> },
+              { value: 'card',     label: 'Карта',    icon: <CreditCard size={14} /> },
+              { value: 'transfer', label: 'Перевод',  icon: <CreditCard size={14} /> },
+            ].map(m => (
               <button
-                key={m}
-                className={`btn ${method === m ? 'btn-primary' : 'btn-secondary'}`}
+                key={m.value}
+                className={`btn ${method === m.value ? 'btn-primary' : 'btn-secondary'}`}
                 style={{ flex: 1, justifyContent: 'center' }}
-                onClick={() => setMethod(m)}
+                onClick={() => setMethod(m.value)}
               >
-                {m === 'наличные' ? <Banknote size={14} /> : <CreditCard size={14} />}
-                {m}
+                {m.icon} {m.label}
               </button>
             ))}
           </div>
 
-          {method === 'наличные' && (
+          {method === 'cash' && (
             <>
               <div className="form-group">
                 <label className="form-label">Сумма от покупателя</label>
@@ -241,7 +244,7 @@ function PaymentModal({ total, onPay, onClose }) {
             className="btn btn-primary"
             style={{ fontSize: 15, padding: '10px 24px' }}
             onClick={() => onPay(method, parseFloat(paid) || total, change)}
-            disabled={method === 'наличные' && (parseFloat(paid) || 0) < total}
+            disabled={method === 'cash' && (parseFloat(paid) || 0) < total}
           >
             ✓ Провести оплату
           </button>
