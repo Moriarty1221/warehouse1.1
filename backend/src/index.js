@@ -57,6 +57,56 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
+// ── Telegram Bot Webhook ──────────────────────────────────────
+// Принимает обновления от Telegram (нужно зарегистрировать webhook)
+// POST https://api.telegram.org/bot<TOKEN>/setWebhook?url=<RAILWAY_URL>/telegram/webhook
+const { PrismaClient } = require('@prisma/client');
+const _prismaBot = new PrismaClient();
+
+app.post('/telegram/webhook', express.json(), async (req, res) => {
+  res.sendStatus(200); // отвечаем сразу чтобы Telegram не повторял
+  try {
+    const update = req.body;
+    const message = update?.message;
+    if (!message) return;
+
+    const chatId = String(message.chat.id);
+    const text = (message.text || '').trim();
+    const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    if (!BOT_TOKEN) return;
+
+    const sendReply = async (msg) => {
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: 'Markdown' })
+      }).catch(() => {});
+    };
+
+    if (text === '/start' || text.startsWith('/start ')) {
+      // Подписываем пользователя
+      await _prismaBot.telegramSubscriber.upsert({
+        where: { chatId },
+        update: { active: true, username: message.from?.username, firstName: message.from?.first_name },
+        create: { chatId, username: message.from?.username, firstName: message.from?.first_name, active: true }
+      });
+      await sendReply('✅ *Вы подписаны на отчёты склада WH365!*\n\nВы будете получать:\n• Чеки продаж\n• Отчёты по сменам\n• Аналитику\n\nДля отписки отправьте /stop');
+    } else if (text === '/stop') {
+      await _prismaBot.telegramSubscriber.updateMany({ where: { chatId }, data: { active: false } });
+      await sendReply('❌ Вы отписались от уведомлений. Для повторной подписки отправьте /start');
+    } else if (text === '/status') {
+      const sub = await _prismaBot.telegramSubscriber.findUnique({ where: { chatId } });
+      if (sub?.active) {
+        await sendReply('✅ Вы *подписаны* на уведомления');
+      } else {
+        await sendReply('❌ Вы *не подписаны*. Отправьте /start для подписки');
+      }
+    }
+  } catch (e) {
+    console.error('Telegram webhook error:', e.message);
+  }
+});
+
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(err.status || 500).json({ error: err.message || 'Internal Server Error' });
