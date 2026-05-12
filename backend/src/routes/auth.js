@@ -18,13 +18,23 @@ router.post('/login', async (req, res) => {
   res.json({ token, user: { id: user.id, login: user.login, fullName: user.fullName, role: user.role, warehouse: user.warehouse } });
 });
 
+// ИСПРАВЛЕНО: убран конфликт include + select — оставили только include
 router.get('/me', require('../middleware/auth').authenticate, async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
-    include: { warehouse: true },
-    select: { id: true, login: true, fullName: true, role: true, warehouseId: true, warehouse: true, isActive: true, createdAt: true }
+    include: { warehouse: true }
   });
-  res.json(user);
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  res.json({
+    id: user.id,
+    login: user.login,
+    fullName: user.fullName,
+    role: user.role,
+    warehouseId: user.warehouseId,
+    isActive: user.isActive,
+    createdAt: user.createdAt,
+    warehouse: user.warehouse
+  });
 });
 
 module.exports = router;

@@ -5,7 +5,7 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Seeding database...');
 
-  // Create admin user
+  // Admin user
   const adminExists = await prisma.user.findUnique({ where: { login: 'Admin787' } });
   if (!adminExists) {
     await prisma.user.create({
@@ -39,16 +39,18 @@ async function main() {
   const cat8 = await prisma.category.upsert({ where: { id: 8 }, update: {}, create: { id: 8, name: 'Аксессуары для обуви' } });
   console.log('✅ Shoe categories created');
 
-  // Sample shoe products
+  // Sample products
+  // ИСПРАВЛЕНО: categoryId -> category: { connect: { id: ... } }
   const products = [
-    { sku: 'NIKE-AM270-42', name: 'Nike Air Max 270 — 42р', categoryId: cat1.id, unit: 'пар', minStock: 5, price: 4500 },
-    { sku: 'ADIDAS-UB22-41', name: 'Adidas Ultraboost 22 — 41р', categoryId: cat1.id, unit: 'пар', minStock: 3, price: 5200 },
-    { sku: 'PUMA-RS-40', name: 'Puma RS-X — 40р', categoryId: cat6.id, unit: 'пар', minStock: 5, price: 3800 },
-    { sku: 'CONVERSE-WH-39', name: 'Converse All Star White — 39р', categoryId: cat1.id, unit: 'пар', minStock: 10, price: 2900 },
+    { sku: 'NIKE-AM270-42',    name: 'Nike Air Max 270 — 42р',        category: { connect: { id: cat1.id } }, unit: 'пар', minStock: 5,  salePrice: 4500 },
+    { sku: 'ADIDAS-UB22-41',   name: 'Adidas Ultraboost 22 — 41р',    category: { connect: { id: cat1.id } }, unit: 'пар', minStock: 3,  salePrice: 5200 },
+    { sku: 'PUMA-RS-40',       name: 'Puma RS-X — 40р',               category: { connect: { id: cat6.id } }, unit: 'пар', minStock: 5,  salePrice: 3800 },
+    { sku: 'CONVERSE-WH-39',   name: 'Converse All Star White — 39р', category: { connect: { id: cat1.id } }, unit: 'пар', minStock: 10, salePrice: 2900 },
   ];
 
   for (const p of products) {
-    await prisma.product.upsert({ where: { sku: p.sku }, update: {}, create: p });
+    const { sku, ...data } = p;
+    await prisma.product.upsert({ where: { sku }, update: {}, create: { sku, ...data } });
   }
   console.log('✅ Sample products created');
 
