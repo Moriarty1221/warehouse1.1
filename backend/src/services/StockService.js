@@ -43,11 +43,12 @@ async function adjustStock(tx, { productId, warehouseId, delta, type, docType, d
       await tx.sizeStock.create({ data: { sizeId, warehouseId, quantity: newQty } });
     }
 
-    // Также обновляем суммарный Stock для product
+    // Обновляем суммарный Stock для product — считаем сумму всех SizeStock
+    // ВАЖНО: после update/create выше данные уже обновлены, поэтому просто суммируем
     const allSizeStock = await tx.sizeStock.findMany({
       where: { size: { productId }, warehouseId }
     });
-    const totalQty = allSizeStock.reduce((s, r) => s + r.quantity, 0) + (rows.length > 0 ? 0 : delta);
+    const totalQty = allSizeStock.reduce((s, r) => s + r.quantity, 0);
 
     const existingStock = await tx.stock.findUnique({
       where: { productId_warehouseId: { productId, warehouseId } }
@@ -55,7 +56,11 @@ async function adjustStock(tx, { productId, warehouseId, delta, type, docType, d
     if (existingStock) {
       await tx.stock.update({
         where: { productId_warehouseId: { productId, warehouseId } },
-        data: { quantity: totalQty + delta }
+        data: { quantity: totalQty }  // <-- исправлено: просто totalQty, не totalQty+delta
+      });
+    } else {
+      await tx.stock.create({
+        data: { productId, warehouseId, quantity: totalQty }
       });
     }
 
