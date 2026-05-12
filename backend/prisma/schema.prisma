@@ -59,7 +59,7 @@ model ProductSize {
   productId Int
   size      String
   sku       String  @unique
-  barcode   String? @unique
+  barcode   String?
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   stock     SizeStock[]
   saleItems SaleItem[]
