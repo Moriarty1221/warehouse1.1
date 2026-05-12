@@ -69,18 +69,22 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
     const baseModelSku = sku?.trim() ||
       `${(modelCode||brand||'PROD').toUpperCase().replace(/\s+/g,'').slice(0,10)}-MULTI`;
 
-    // ИСПРАВЛЕНО: генерируем уникальный SKU для каждого размера автоматически
-    // Штрихкод (barcode) может быть одинаковым для всех размеров одной модели
+    // Генерируем уникальный SKU для каждого размера автоматически
+    // Штрихкод только у модели (Product), у размеров (ProductSize) штрихкода нет
+    const base = (modelCode||brand||sku||'PROD').toUpperCase().replace(/\s+/g,'').slice(0,10);
+    const ts = Date.now(); // гарантирует уникальность даже при одинаковых размерах
     const sizeSkuCount = {};
     const sizesData = sizes.map(s => {
       const sizeKey = String(s.size).toUpperCase().replace(/\s+/g, '');
       sizeSkuCount[sizeKey] = (sizeSkuCount[sizeKey] || 0) + 1;
-      const suffix = sizeSkuCount[sizeKey] > 1 ? `-${sizeSkuCount[sizeKey]}` : '';
-      const autoSku = `${(modelCode||brand||'PROD').toUpperCase().replace(/\s+/g,'').slice(0,8)}-${sizeKey}${suffix}`;
+      const count = sizeSkuCount[sizeKey];
+      // GUCCI-42, GUCCI-42-2, GUCCI-42-3 — уникально даже при повторах
+      const uniqueSku = count === 1
+        ? `${base}-${sizeKey}-${ts}`
+        : `${base}-${sizeKey}-${ts}-${count}`;
       return {
         size: s.size,
-        sku: s.sku?.trim() || autoSku,
-        barcode: s.barcode?.trim() || barcode || null  // используем общий barcode модели если не задан
+        sku: uniqueSku,  // всегда авто, пользователь не вводит SKU для размеров
       };
     });
 
