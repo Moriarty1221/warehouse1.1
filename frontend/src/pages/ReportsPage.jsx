@@ -3,6 +3,7 @@ import { Download, FileJson, FileSpreadsheet, BarChart2, Send } from 'lucide-rea
 import { api, apiDownload } from '../utils/api';
 import { useToast } from '../hooks/useToast.jsx';
 import { useAuth } from '../hooks/useAuth.jsx';
+import TelegramReportButton from '../components/TelegramReportButton.jsx';
 
 export default function ReportsPage() {
   const { user } = useAuth();
@@ -51,27 +52,7 @@ export default function ReportsPage() {
 
   return (
     <div>
-      {/* Telegram report button */}
-      <div className="card" style={{ marginBottom: 20, background: 'linear-gradient(135deg, #0088cc22, #0088cc11)', border: '1px solid #0088cc44' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Send size={17} style={{ color: '#0088cc' }} /> Отправить отчёт за сегодня в Telegram
-            </h3>
-            <p style={{ fontSize: 12, color: 'var(--text3)', margin: 0 }}>
-              Отчёт включает количество продаж, пар и выручку за сегодня. Будет помечен вашим логином: <strong>@{user?.login}</strong>
-            </p>
-          </div>
-          <button
-            className="btn btn-primary"
-            onClick={sendTelegram}
-            disabled={tgLoading}
-            style={{ background: '#0088cc', minWidth: 180 }}
-          >
-            {tgLoading ? '⏳ Отправка...' : <><Send size={15} /> Отправить в Telegram</>}
-          </button>
-        </div>
-      </div>
+      <TelegramReportButton />
 
       {/* Export buttons */}
       <div className="card" style={{ marginBottom: 20 }}>

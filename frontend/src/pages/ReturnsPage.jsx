@@ -3,6 +3,7 @@ import { RotateCcw, Plus, Search, CheckCircle, XCircle, AlertCircle } from 'luci
 import { api } from '../utils/api';
 import { useToast } from '../hooks/useToast.jsx';
 import { useAuth } from '../hooks/useAuth.jsx';
+import TelegramReportButton from '../components/TelegramReportButton.jsx';
 
 const fmt = n => new Intl.NumberFormat('ru-RU').format(Number(n || 0));
 const fmtDate = d => d ? new Date(d).toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
@@ -189,6 +190,7 @@ export default function ReturnsPage() {
 
   return (
     <div>
+      <TelegramReportButton />
       <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20 }}>
         <div className="search-bar">
           <Search size={15} className="search-icon" />

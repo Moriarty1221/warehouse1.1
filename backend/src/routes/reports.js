@@ -1,10 +1,18 @@
+// ============================================================
+// РАЗДЕЛ 8: ОТЧЁТЫ
+// Файл: backend/src/routes/reports.js
+// Доступ: admin, manager, collector
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
+const { requireRole } = require('../middleware/auth');
 const XLSX = require('xlsx');
 const https = require('https');
 const prisma = new PrismaClient();
 
-router.get('/stock', async (req, res) => {
+// --- 8.1: Отчёт по остаткам ---
+router.get('/stock', requireRole('admin', 'manager', 'collector', 'inventor'), async (req, res) => {
   const { warehouseId, format } = req.query;
   const where = warehouseId ? { warehouseId: +warehouseId } : {};
   const stock = await prisma.stock.findMany({
@@ -345,3 +353,298 @@ router.get('/analytics/slow-movers', async (req, res) => {
 });
 
 module.exports = router;
+
+// ============================================================
+// РАЗДЕЛ 8.2: ОТЧЁТЫ В TELEGRAM ПО РОЛЯМ
+// Каждый эндпоинт формирует отчёт, специфичный для роли.
+// POST /reports/telegram/:role
+// ============================================================
+
+const { requireRole } = require('../middleware/auth');
+
+// --- 8.2.0: Вспомогательные функции ---
+const fmt    = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0));
+const fmtDec = (n) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
+const today  = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+const todayEnd = () => { const d = new Date(); d.setHours(23,59,59,999); return d; };
+const nowStr = () => new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Bishkek', hour: '2-digit', minute: '2-digit' });
+const dateStr = () => new Date().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+// --- 8.2.1: АДМИНИСТРАТОР — сводный отчёт ---
+router.post('/telegram/admin', requireRole('admin'), async (req, res) => {
+  const { warehouseId } = req.body;
+  const wf = warehouseId ? { warehouseId: +warehouseId } : {};
+
+  const [sales, receipts, issues, stock, shifts] = await Promise.all([
+    prisma.sale.findMany({
+      where: { ...wf, createdAt: { gte: today(), lte: todayEnd() } },
+      include: { cashier: { select: { fullName: true } } }
+    }),
+    prisma.receipt.count({ where: { ...wf, status: 'confirmed', date: { gte: today(), lte: todayEnd() } } }),
+    prisma.issue.count({ where: { ...wf, status: 'confirmed', date: { gte: today(), lte: todayEnd() } } }),
+    prisma.stock.aggregate({ _sum: { quantity: true }, where: { ...wf } }),
+    prisma.shift.findMany({
+      where: { ...wf, openedAt: { gte: today() } },
+      include: { cashier: { select: { fullName: true } } }
+    }),
+  ]);
+
+  const totalSales = sales.reduce((s, x) => s + x.total, 0);
+  const cashSales  = sales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + x.total, 0);
+  const cardSales  = sales.filter(s => s.paymentMethod === 'card').reduce((s, x) => s + x.total, 0);
+  const transferSales = sales.filter(s => s.paymentMethod === 'transfer').reduce((s, x) => s + x.total, 0);
+  const openShifts = shifts.filter(s => s.status === 'open').length;
+  const closedShifts = shifts.filter(s => s.status === 'closed').length;
+
+  let text = `👑 *Сводный отчёт — ${dateStr()}*\n`;
+  text += `👤 Администратор: ${req.user.fullName}\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `🧾 Продаж: *${sales.length}* чеков\n`;
+  text += `💵 Наличные: *${fmt(cashSales)} сом*\n`;
+  text += `💳 Карта: *${fmt(cardSales)} сом*\n`;
+  text += `🏦 Перевод: *${fmt(transferSales)} сом*\n`;
+  text += `💰 Итого выручка: *${fmt(totalSales)} сом*\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `📥 Приходов сегодня: ${receipts}\n`;
+  text += `📤 Расходов сегодня: ${issues}\n`;
+  text += `📦 Позиций на складе: ${stock._sum.quantity || 0}\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `🕐 Смен открыто: ${openShifts} / закрыто: ${closedShifts}\n`;
+  if (shifts.length > 0) {
+    text += shifts.map(s => `  · ${s.cashier?.fullName} — ${s.status === 'open' ? '🟢 открыта' : '🔴 закрыта'}`).join('\n') + '\n';
+  }
+  text += `⏰ ${nowStr()}`;
+
+  try {
+    await sendTelegramMessage(text);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- 8.2.2: МЕНЕДЖЕР — складской отчёт ---
+router.post('/telegram/manager', requireRole('admin', 'manager'), async (req, res) => {
+  const { warehouseId } = req.body;
+  const wf = warehouseId ? { warehouseId: +warehouseId } : {};
+
+  const [sales, receipts, issues, lowStock] = await Promise.all([
+    prisma.sale.findMany({
+      where: { ...wf, createdAt: { gte: today(), lte: todayEnd() } }
+    }),
+    prisma.receipt.findMany({
+      where: { ...wf, status: 'confirmed', date: { gte: today(), lte: todayEnd() } },
+      include: { items: true }
+    }),
+    prisma.issue.findMany({
+      where: { ...wf, status: 'confirmed', date: { gte: today(), lte: todayEnd() } },
+      include: { items: true }
+    }),
+    prisma.stock.findMany({
+      where: { ...wf },
+      include: { product: { select: { name: true, minStock: true } } },
+    }),
+  ]);
+
+  const totalSales = sales.reduce((s, x) => s + x.total, 0);
+  const receiptItems = receipts.reduce((s, r) => s + r.items.reduce((ss, i) => ss + i.quantity, 0), 0);
+  const issueItems = issues.reduce((s, r) => s + r.items.reduce((ss, i) => ss + i.quantity, 0), 0);
+  const low = lowStock.filter(s => s.quantity <= s.product.minStock);
+
+  let text = `📋 *Отчёт менеджера — ${dateStr()}*\n`;
+  text += `👤 ${req.user.fullName}\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `🛒 Продажи: *${sales.length}* чеков на *${fmt(totalSales)} сом*\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `📥 Приходы: ${receipts.length} докум., ${receiptItems} ед.\n`;
+  text += `📤 Расходы: ${issues.length} докум., ${issueItems} ед.\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  if (low.length > 0) {
+    text += `⚠️ *Мало на складе (${low.length} позиций):*\n`;
+    low.slice(0, 8).forEach(s => {
+      text += `  · ${s.product.name}: ${s.quantity} ед.\n`;
+    });
+    if (low.length > 8) text += `  · ...и ещё ${low.length - 8} позиций\n`;
+  } else {
+    text += `✅ Критических остатков нет\n`;
+  }
+  text += `⏰ ${nowStr()}`;
+
+  try {
+    await sendTelegramMessage(text);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- 8.2.3: КАССИР — отчёт по смене ---
+router.post('/telegram/cashier', requireRole('admin', 'manager', 'cashier'), async (req, res) => {
+  const { warehouseId } = req.body;
+
+  // Берём последнюю смену кассира (открытую или последнюю закрытую за сегодня)
+  const shift = await prisma.shift.findFirst({
+    where: {
+      cashierId: req.user.id,
+      ...(warehouseId ? { warehouseId: +warehouseId } : {}),
+      openedAt: { gte: today() },
+    },
+    include: {
+      warehouse: true,
+      cashier: { select: { fullName: true } },
+      sales: true,
+      cashOps: true,
+    },
+    orderBy: { openedAt: 'desc' },
+  });
+
+  if (!shift) {
+    return res.status(404).json({ error: 'Смена за сегодня не найдена' });
+  }
+
+  const cashSales     = shift.sales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + x.total, 0);
+  const cardSales     = shift.sales.filter(s => s.paymentMethod === 'card').reduce((s, x) => s + x.total, 0);
+  const transferSales = shift.sales.filter(s => s.paymentMethod === 'transfer').reduce((s, x) => s + x.total, 0);
+  const totalSales    = shift.sales.reduce((s, x) => s + x.total, 0);
+  const collections   = shift.cashOps.filter(o => o.type === 'collection').reduce((s, x) => s + x.amount, 0);
+  const expenses      = shift.cashOps.filter(o => o.type === 'expense').reduce((s, x) => s + x.amount, 0);
+  const expectedCash  = shift.openingCash + cashSales - collections - expenses;
+  const openedAt      = new Date(shift.openedAt).toLocaleTimeString('ru-RU', { timeZone: 'Asia/Bishkek', hour: '2-digit', minute: '2-digit' });
+
+  let text = `💳 *Отчёт кассира — ${dateStr()}*\n`;
+  text += `👤 ${shift.cashier?.fullName}\n`;
+  text += `🏬 ${shift.warehouse?.name}\n`;
+  text += `🕐 Открыта: ${openedAt} · Статус: ${shift.status === 'open' ? '🟢 открыта' : '🔴 закрыта'}\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `🧾 Чеков: *${shift.sales.length}*\n`;
+  text += `💵 Наличные: *${fmt(cashSales)} сом*\n`;
+  text += `💳 Карта: *${fmt(cardSales)} сом*\n`;
+  text += `🏦 Перевод: *${fmt(transferSales)} сом*\n`;
+  text += `💰 Итого: *${fmt(totalSales)} сом*\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `💼 Касса нач.: ${fmt(shift.openingCash)} сом\n`;
+  if (collections > 0) text += `🏦 Инкассировано: ${fmt(collections)} сом\n`;
+  if (expenses > 0) text += `📤 Расходы: ${fmt(expenses)} сом\n`;
+  text += `💼 Ожидается в кассе: *${fmt(expectedCash)} сом*\n`;
+  text += `⏰ ${nowStr()}`;
+
+  try {
+    await sendTelegramMessage(text);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- 8.2.4: ИНКАССАТОР — отчёт по инкассациям ---
+router.post('/telegram/collector', requireRole('admin', 'collector'), async (req, res) => {
+  const { warehouseId } = req.body;
+  const wf = warehouseId ? { warehouseId: +warehouseId } : {};
+
+  const shifts = await prisma.shift.findMany({
+    where: { ...wf, openedAt: { gte: today() } },
+    include: {
+      warehouse: true,
+      cashier: { select: { fullName: true } },
+      sales: true,
+      cashOps: true,
+    },
+    orderBy: { openedAt: 'desc' },
+  });
+
+  let totalCollected = 0;
+  let totalSalesAll = 0;
+  let lines = '';
+
+  for (const shift of shifts) {
+    const cashSales   = shift.sales.filter(s => s.paymentMethod === 'cash').reduce((s, x) => s + x.total, 0);
+    const collections = shift.cashOps.filter(o => o.type === 'collection').reduce((s, x) => s + x.amount, 0);
+    const totalSales  = shift.sales.reduce((s, x) => s + x.total, 0);
+    totalCollected   += collections;
+    totalSalesAll    += totalSales;
+
+    lines += `\n🔹 ${shift.cashier?.fullName} (${shift.warehouse?.name})\n`;
+    lines += `   Продаж: ${shift.sales.length} · Выручка: ${fmt(totalSales)} сом\n`;
+    lines += `   Нал: ${fmt(cashSales)} сом · Инкассировано: ${fmt(collections)} сом\n`;
+    lines += `   Статус: ${shift.status === 'open' ? '🟢 открыта' : '🔴 закрыта'}\n`;
+  }
+
+  let text = `🏦 *Отчёт инкассатора — ${dateStr()}*\n`;
+  text += `👤 ${req.user.fullName}\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `📊 Смен за сегодня: *${shifts.length}*\n`;
+  text += `💰 Общая выручка: *${fmt(totalSalesAll)} сом*\n`;
+  text += `🏦 Всего инкассировано: *${fmt(totalCollected)} сом*\n`;
+  text += `━━━━━━━━━━━━━━━━`;
+  text += lines || '\nНет данных за сегодня\n';
+  text += `⏰ ${nowStr()}`;
+
+  try {
+    await sendTelegramMessage(text);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- 8.2.5: ИНВЕНТОР — отчёт по инвентаризациям ---
+router.post('/telegram/inventor', requireRole('admin', 'manager', 'inventor'), async (req, res) => {
+  const { warehouseId } = req.body;
+  const wf = warehouseId ? { warehouseId: +warehouseId } : {};
+
+  const [inventories, stock] = await Promise.all([
+    prisma.inventory.findMany({
+      where: { ...wf, createdAt: { gte: today() } },
+      include: {
+        warehouse: true,
+        items: true,
+        createdByUser: { select: { fullName: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.stock.findMany({
+      where: { ...wf, quantity: { lte: 5 } },
+      include: { product: { select: { name: true, minStock: true } } },
+      take: 10,
+    }),
+  ]);
+
+  let totalDiscrepancy = 0;
+  let lines = '';
+
+  for (const inv of inventories) {
+    const discrepancies = inv.items.filter(i => i.actualQuantity !== null && i.actualQuantity !== i.systemQuantity);
+    const diff = discrepancies.reduce((s, i) => s + (i.actualQuantity - i.systemQuantity), 0);
+    totalDiscrepancy += diff;
+
+    lines += `\n🔹 Склад: ${inv.warehouse?.name} (${inv.type})\n`;
+    lines += `   Позиций: ${inv.items.length} · Расхождений: ${discrepancies.length}\n`;
+    lines += `   Итого разница: ${diff >= 0 ? '+' : ''}${diff} ед.\n`;
+    lines += `   Статус: ${inv.status === 'completed' ? '✅ завершена' : '🔄 в процессе'}\n`;
+  }
+
+  let text = `📦 *Отчёт инвентора — ${dateStr()}*\n`;
+  text += `👤 ${req.user.fullName}\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `📋 Инвентаризаций сегодня: *${inventories.length}*\n`;
+  text += `📊 Суммарная разница: *${totalDiscrepancy >= 0 ? '+' : ''}${totalDiscrepancy} ед.*\n`;
+  if (lines) {
+    text += `━━━━━━━━━━━━━━━━`;
+    text += lines;
+  }
+  if (stock.length > 0) {
+    text += `━━━━━━━━━━━━━━━━\n`;
+    text += `⚠️ *Критически мало (≤5 ед.):*\n`;
+    stock.forEach(s => {
+      text += `  · ${s.product.name}: ${s.quantity} ед.\n`;
+    });
+  }
+  text += `⏰ ${nowStr()}`;
+
+  try {
+    await sendTelegramMessage(text);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});

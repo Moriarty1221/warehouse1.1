@@ -302,11 +302,31 @@ export default function POSPage() {
     }
   }, [warehouseId]);
 
+  const [sizeModal, setSizeModal] = useState(null); // { product, sizes }
+
   const handleBarcode = (sku) => {
-    const product = products.find(p => p.sku === sku.trim());
-    if (product) {
-      addToCart(product);
-      show(`➕ ${product.name}`, 'success');
+    // Ищем сначала по SKU размера
+    let found = null;
+    for (const p of products) {
+      if (p.hasMultipleSizes && p.sizes) {
+        const sz = p.sizes.find(s => s.sku === sku.trim() || s.barcode === sku.trim());
+        if (sz) {
+          const stockItem = stock.find(s => s.productId === p.id);
+          addToCartWithSize(p, sz, stockItem);
+          show(`➕ ${p.name} (${sz.size})`, 'success');
+          setScan('');
+          return;
+        }
+      }
+      if (p.sku === sku.trim() || p.barcode === sku.trim()) found = p;
+    }
+    if (found) {
+      if (found.hasMultipleSizes && found.sizes?.length > 0) {
+        openSizeModal(found);
+      } else {
+        addToCart(found);
+        show(`➕ ${found.name}`, 'success');
+      }
     } else {
       show('Товар не найден: ' + sku, 'error');
     }
@@ -317,27 +337,58 @@ export default function POSPage() {
     if (e.key === 'Enter') { handleBarcode(scan); }
   };
 
-  const addToCart = (product) => {
+  const openSizeModal = (product) => {
+    const sizesWithStock = (product.sizes || []).map(sz => {
+      const sizeStockItem = sz.stock?.find(s => s.warehouseId === +warehouseId);
+      return { ...sz, stockQty: sizeStockItem ? sizeStockItem.quantity : 0 };
+    });
+    setSizeModal({ product, sizes: sizesWithStock });
+  };
+
+  const addToCartWithSize = (product, size, stockInfo) => {
+    const cartKey = `${product.id}-${size.id}`;
     setCart(prev => {
-      const ex = prev.find(i => i.productId === product.id);
-      if (ex) return prev.map(i => i.productId === product.id ? { ...i, qty: i.qty + 1 } : i);
-      // Use salePrice (backend field). product.price is legacy alias from some responses.
+      const ex = prev.find(i => i.cartKey === cartKey);
+      if (ex) return prev.map(i => i.cartKey === cartKey ? { ...i, qty: i.qty + 1 } : i);
       const price = product.salePrice || product.price || 0;
-      return [...prev, { productId: product.id, name: product.name, sku: product.sku, unit: product.unit, price, qty: 1 }];
+      return [...prev, {
+        cartKey,
+        productId: product.id,
+        sizeId: size.id,
+        name: `${product.name} (${size.size})`,
+        sku: size.sku,
+        unit: product.unit,
+        price,
+        qty: 1
+      }];
     });
   };
 
-  const updateQty = (productId, delta) => {
-    setCart(prev => prev.map(i => i.productId === productId
+  const addToCart = (product) => {
+    if (product.hasMultipleSizes && product.sizes?.length > 0) {
+      openSizeModal(product);
+      return;
+    }
+    const cartKey = `${product.id}-0`;
+    setCart(prev => {
+      const ex = prev.find(i => i.cartKey === cartKey);
+      if (ex) return prev.map(i => i.cartKey === cartKey ? { ...i, qty: i.qty + 1 } : i);
+      const price = product.salePrice || product.price || 0;
+      return [...prev, { cartKey, productId: product.id, sizeId: null, name: product.name, sku: product.sku, unit: product.unit, price, qty: 1 }];
+    });
+  };
+
+  const updateQty = (cartKey, delta) => {
+    setCart(prev => prev.map(i => i.cartKey === cartKey
       ? { ...i, qty: Math.max(0, i.qty + delta) }
       : i).filter(i => i.qty > 0));
   };
 
-  const setPrice = (productId, price) => {
-    setCart(prev => prev.map(i => i.productId === productId ? { ...i, price: parseFloat(price) || 0 } : i));
+  const setPrice = (cartKey, price) => {
+    setCart(prev => prev.map(i => i.cartKey === cartKey ? { ...i, price: parseFloat(price) || 0 } : i));
   };
 
-  const removeFromCart = (productId) => setCart(prev => prev.filter(i => i.productId !== productId));
+  const removeFromCart = (cartKey) => setCart(prev => prev.filter(i => i.cartKey !== cartKey));
 
   const total = cart.reduce((sum, i) => sum + i.qty * i.price, 0);
   const fmt = (n) => Number(n).toFixed(2);
@@ -350,7 +401,7 @@ export default function POSPage() {
         method: 'POST',
         body: JSON.stringify({
           warehouseId: +warehouseId,
-          items: cart.map(i => ({ productId: i.productId, quantity: i.qty, salePrice: i.price, costPrice: 0 })),
+          items: cart.map(i => ({ productId: i.productId, sizeId: i.sizeId || null, quantity: i.qty, salePrice: i.price, costPrice: 0 })),
           cashierName: user?.fullName,
           paymentMethod: method,
           amountPaid
@@ -432,6 +483,7 @@ export default function POSPage() {
         }}>
           {filtered.map(p => {
             const hasStock = !warehouseId || p.stockQuantity > 0;
+            const hasSizes = p.hasMultipleSizes && p.sizes?.length > 0;
             return (
             <button
               key={p.id}
@@ -446,9 +498,14 @@ export default function POSPage() {
               onMouseEnter={e => { if (hasStock) { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'var(--accent-glow)'; }}}
               onMouseLeave={e => { if (hasStock) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--bg2)'; }}}
             >
-              <div style={{ fontSize: 24, marginBottom: 6 }}>📦</div>
+              <div style={{ fontSize: 24, marginBottom: 6 }}>{hasSizes ? '👟' : '📦'}</div>
               <div style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3, marginBottom: 4 }}>{p.name}</div>
               <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace' }}>{p.sku}</div>
+              {hasSizes && (
+                <div style={{ fontSize: 10, color: 'var(--accent)', marginTop: 2 }}>
+                  {p.sizes.length} разм. • выбрать ↓
+                </div>
+              )}
               <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--accent2)', marginTop: 6 }}>
                 {fmt(p.salePrice || p.price || 0)} сом
               </div>
@@ -494,23 +551,23 @@ export default function POSPage() {
               <div>Добавьте товары из каталога или отсканируйте штрихкод</div>
             </div>
           ) : cart.map(item => (
-            <div key={item.productId} style={{
+            <div key={item.cartKey} style={{
               background: 'var(--bg3)', border: '1px solid var(--border)',
               borderRadius: 8, padding: '10px 12px', marginBottom: 8
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, flex: 1, marginRight: 8 }}>{item.name}</div>
-                <button className="btn btn-danger btn-sm btn-icon" onClick={() => removeFromCart(item.productId)}>
+                <button className="btn btn-danger btn-sm btn-icon" onClick={() => removeFromCart(item.cartKey)}>
                   <Trash2 size={12} />
                 </button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {/* Qty controls */}
-                <button className="btn btn-ghost btn-sm btn-icon" onClick={() => updateQty(item.productId, -1)}>
+                <button className="btn btn-ghost btn-sm btn-icon" onClick={() => updateQty(item.cartKey, -1)}>
                   <Minus size={13} />
                 </button>
                 <span style={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>{item.qty}</span>
-                <button className="btn btn-ghost btn-sm btn-icon" onClick={() => updateQty(item.productId, 1)}>
+                <button className="btn btn-ghost btn-sm btn-icon" onClick={() => updateQty(item.cartKey, 1)}>
                   <Plus size={13} />
                 </button>
                 <span style={{ color: 'var(--text3)', fontSize: 11 }}>{item.unit}</span>
@@ -520,7 +577,7 @@ export default function POSPage() {
                   <input
                     type="number"
                     value={item.price}
-                    onChange={e => setPrice(item.productId, e.target.value)}
+                    onChange={e => setPrice(item.cartKey, e.target.value)}
                     style={{
                       width: 70, background: 'var(--bg)', border: '1px solid var(--border)',
                       borderRadius: 5, color: 'var(--text)', padding: '3px 6px', fontSize: 12,
@@ -583,6 +640,55 @@ export default function POSPage() {
           receipt={receipt}
           onClose={() => setReceipt(null)}
         />
+      )}
+
+      {/* Size selection modal */}
+      {sizeModal && (
+        <div className="modal-overlay" onClick={() => setSizeModal(null)}>
+          <div className="modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">👟 Выберите размер</div>
+              <button className="btn btn-ghost btn-icon" onClick={() => setSizeModal(null)}><X size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14 }}>{sizeModal.product.name}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                {sizeModal.sizes.map(sz => {
+                  const available = !warehouseId || sz.stockQty > 0;
+                  return (
+                    <button
+                      key={sz.id}
+                      disabled={!available}
+                      onClick={() => {
+                        addToCartWithSize(sizeModal.product, sz);
+                        setSizeModal(null);
+                        show(`➕ ${sizeModal.product.name} (${sz.size})`, 'success');
+                      }}
+                      style={{
+                        padding: '14px 8px',
+                        borderRadius: 10,
+                        border: `2px solid ${available ? 'var(--accent)' : 'var(--border)'}`,
+                        background: available ? 'var(--accent-dim,rgba(0,212,170,0.10))' : 'var(--bg3)',
+                        color: available ? 'var(--accent)' : 'var(--text3)',
+                        fontWeight: 700, fontSize: 16,
+                        cursor: available ? 'pointer' : 'not-allowed',
+                        opacity: available ? 1 : 0.45,
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4
+                      }}
+                    >
+                      {sz.size}
+                      {warehouseId && (
+                        <span style={{ fontSize: 10, fontWeight: 400 }}>
+                          {available ? `${sz.stockQty} шт` : 'нет'}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

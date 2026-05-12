@@ -1,3 +1,9 @@
+// ============================================================
+// РАЗДЕЛ 5: РАСХОДЫ (СПИСАНИЯ)
+// Файл: backend/src/routes/issues.js
+// Доступ: admin, manager
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
 const { requireRole } = require('../middleware/auth');

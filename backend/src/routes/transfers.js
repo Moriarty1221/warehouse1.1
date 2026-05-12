@@ -1,3 +1,9 @@
+// ============================================================
+// РАЗДЕЛ 10: ПЕРЕМЕЩЕНИЯ МЕЖДУ СКЛАДАМИ
+// Файл: backend/src/routes/transfers.js
+// Доступ: admin, manager
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
 const { requireRole } = require('../middleware/auth');

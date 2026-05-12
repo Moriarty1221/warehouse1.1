@@ -3,6 +3,7 @@ import { Clock, Play, Square, Plus, Minus, TrendingUp, Banknote, CreditCard, Arr
 import { api } from '../utils/api';
 import { useToast } from '../hooks/useToast.jsx';
 import { useAuth } from '../hooks/useAuth.jsx';
+import TelegramReportButton from '../components/TelegramReportButton.jsx';
 
 const fmt = n => new Intl.NumberFormat('ru-RU').format(Number(n || 0));
 const fmtDate = d => d ? new Date(d).toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
@@ -225,6 +226,7 @@ export default function ShiftsPage() {
 
   return (
     <div>
+      <TelegramReportButton />
       {/* Current shift banner */}
       {current ? (
         <div style={{ background:'rgba(0,212,170,0.06)', border:'1px solid rgba(0,212,170,0.25)', borderRadius:12, padding:'16px 20px', marginBottom:20, display:'flex', alignItems:'center', gap:16, flexWrap:'wrap' }}>

@@ -53,6 +53,22 @@ model Category {
   products Product[]
 }
 
+// ProductSize - размеры внутри одного товара (модели)
+model ProductSize {
+  id        Int     @id @default(autoincrement())
+  productId Int
+  size      String
+  sku       String  @unique
+  barcode   String? @unique
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stock     SizeStock[]
+  saleItems SaleItem[]
+  returnItems ReturnItem[]
+  receiptItems ReceiptItem[]
+  inventoryItems InventoryItem[]
+  stockMovements StockMovement[]
+}
+
 model Product {
   id             Int             @id @default(autoincrement())
   sku            String          @unique
@@ -71,8 +87,10 @@ model Product {
   salePrice      Float           @default(0)
   description    String?
   isActive       Boolean         @default(true)
+  hasMultipleSizes Boolean       @default(false)
   category       Category?       @relation(fields: [categoryId], references: [id])
   supplier       Supplier?       @relation(fields: [supplierId], references: [id])
+  sizes          ProductSize[]
   stock          Stock[]
   receiptItems   ReceiptItem[]
   issueItems     IssueItem[]
@@ -81,6 +99,20 @@ model Product {
   returnItems    ReturnItem[]
   stockMovements StockMovement[]
   inventoryItems InventoryItem[]
+}
+
+// Остатки по размеру (когда товар с несколькими размерами)
+model SizeStock {
+  id          Int         @id @default(autoincrement())
+  sizeId      Int
+  warehouseId Int
+  quantity    Float       @default(0)
+  reserved    Float       @default(0)
+  avgCost     Float       @default(0)
+  updatedAt   DateTime    @updatedAt
+  size        ProductSize @relation(fields: [sizeId], references: [id], onDelete: Cascade)
+
+  @@unique([sizeId, warehouseId])
 }
 
 model Supplier {
@@ -108,17 +140,19 @@ model Stock {
 }
 
 model StockMovement {
-  id            Int      @id @default(autoincrement())
+  id            Int          @id @default(autoincrement())
   productId     Int
   warehouseId   Int
+  sizeId        Int?
   delta         Float
   type          String
   docType       String?
   docId         Int?
   balanceBefore Float
   balanceAfter  Float
-  createdAt     DateTime @default(now())
-  product       Product  @relation(fields: [productId], references: [id])
+  createdAt     DateTime     @default(now())
+  product       Product      @relation(fields: [productId], references: [id])
+  size          ProductSize? @relation(fields: [sizeId], references: [id])
 }
 
 model Receipt {
@@ -136,13 +170,15 @@ model Receipt {
 }
 
 model ReceiptItem {
-  id          Int     @id @default(autoincrement())
+  id          Int          @id @default(autoincrement())
   receiptId   Int
   productId   Int
+  sizeId      Int?
   quantity    Float
-  costPerUnit Float   @default(0)
-  receipt     Receipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
-  product     Product @relation(fields: [productId], references: [id])
+  costPerUnit Float        @default(0)
+  receipt     Receipt      @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id])
+  size        ProductSize? @relation(fields: [sizeId], references: [id])
 }
 
 model Issue {
@@ -179,10 +215,12 @@ model Shift {
   cashDiff     Float?
   status       String          @default("open")
   xReportAt    DateTime?
+  telegramSent Boolean         @default(false)
   warehouse    Warehouse       @relation(fields: [warehouseId], references: [id])
   cashier      User            @relation(fields: [cashierId], references: [id])
   sales        Sale[]
   cashOps      CashOperation[]
+  returns      Return[]
 }
 
 model CashOperation {
@@ -220,22 +258,25 @@ model Sale {
 }
 
 model SaleItem {
-  id        Int     @id @default(autoincrement())
+  id        Int          @id @default(autoincrement())
   saleId    Int
   productId Int
+  sizeId    Int?
   quantity  Float
   salePrice Float
-  costPrice Float   @default(0)
-  discount  Float   @default(0)
+  costPrice Float        @default(0)
+  discount  Float        @default(0)
   total     Float
-  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  product   Product @relation(fields: [productId], references: [id])
+  sale      Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id])
+  size      ProductSize? @relation(fields: [sizeId], references: [id])
 }
 
 model Return {
   id            Int          @id @default(autoincrement())
   saleId        Int?
   warehouseId   Int
+  shiftId       Int?
   approvedBy    Int?
   reason        String
   reasonNote    String?
@@ -246,18 +287,21 @@ model Return {
   createdAt     DateTime     @default(now())
   sale          Sale?        @relation(fields: [saleId], references: [id])
   warehouse     Warehouse    @relation(fields: [warehouseId], references: [id])
+  shift         Shift?       @relation(fields: [shiftId], references: [id])
   approver      User?        @relation(fields: [approvedBy], references: [id])
   items         ReturnItem[]
 }
 
 model ReturnItem {
-  id          Int     @id @default(autoincrement())
+  id          Int          @id @default(autoincrement())
   returnId    Int
   productId   Int
+  sizeId      Int?
   quantity    Float
   refundPrice Float
-  return      Return  @relation(fields: [returnId], references: [id], onDelete: Cascade)
-  product     Product @relation(fields: [productId], references: [id])
+  return      Return       @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id])
+  size        ProductSize? @relation(fields: [sizeId], references: [id])
 }
 
 model Transfer {
@@ -304,15 +348,17 @@ model Inventory {
 }
 
 model InventoryItem {
-  id          Int       @id @default(autoincrement())
+  id          Int          @id @default(autoincrement())
   inventoryId Int
   productId   Int
+  sizeId      Int?
   expectedQty Float
   actualQty   Float?
   discrepancy Float?
   action      String?
-  inventory   Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
-  product     Product   @relation(fields: [productId], references: [id])
+  inventory   Inventory    @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id])
+  size        ProductSize? @relation(fields: [sizeId], references: [id])
 }
 
 model AuditLog {

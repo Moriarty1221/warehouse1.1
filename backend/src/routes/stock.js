@@ -1,8 +1,16 @@
+// ============================================================
+// РАЗДЕЛ 7: ОСТАТКИ НА СКЛАДЕ
+// Файл: backend/src/routes/stock.js
+// Доступ: admin, manager, inventor, collector
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
+const { requireRole } = require('../middleware/auth');
 const prisma = new PrismaClient();
 
-router.get('/', async (req, res) => {
+// --- 7.1: Список остатков ---
+router.get('/', requireRole('admin', 'manager', 'inventor', 'collector'), async (req, res) => {
   const { warehouseId, lowStock } = req.query;
   const where = {};
   if (warehouseId) where.warehouseId = +warehouseId;
@@ -22,7 +30,8 @@ router.get('/', async (req, res) => {
   res.json(result);
 });
 
-router.get('/summary', async (req, res) => {
+// --- 7.2: Сводка остатков ---
+router.get('/summary', requireRole('admin', 'manager', 'inventor', 'collector'), async (req, res) => {
   const { warehouseId } = req.query;
   const where = warehouseId ? { warehouseId: +warehouseId } : {};
   const stock = await prisma.stock.findMany({

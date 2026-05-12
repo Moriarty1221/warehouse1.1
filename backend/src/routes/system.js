@@ -1,3 +1,9 @@
+// ============================================================
+// РАЗДЕЛ 15: СИСТЕМНЫЕ НАСТРОЙКИ
+// Файл: backend/src/routes/system.js
+// Доступ: только admin
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
 const { requireRole } = require('../middleware/auth');
@@ -56,20 +62,31 @@ router.get('/export/excel', requireRole('admin', 'manager'), async (req, res) =>
 // Full clear ALL data
 router.post('/clear-all', requireRole('admin'), async (req, res) => {
   try {
-    // Delete in proper order to respect FK constraints
+    // Принудительная очистка ВСЕГО в правильном порядке FK
     await prisma.auditLog.deleteMany({});
+    await prisma.inventoryItem.deleteMany({});
+    await prisma.inventory.deleteMany({});
     await prisma.transferItem.deleteMany({});
     await prisma.transfer.deleteMany({});
     await prisma.issueItem.deleteMany({});
     await prisma.issue.deleteMany({});
     await prisma.receiptItem.deleteMany({});
     await prisma.receipt.deleteMany({});
+    await prisma.returnItem.deleteMany({});
+    await prisma.return.deleteMany({});
+    await prisma.saleItem.deleteMany({});
+    await prisma.sale.deleteMany({});
+    await prisma.cashOperation.deleteMany({});
+    await prisma.shift.deleteMany({});
+    await prisma.stockMovement.deleteMany({});
+    await prisma.sizeStock.deleteMany({});
+    await prisma.productSize.deleteMany({});
     await prisma.stock.deleteMany({});
     await prisma.product.deleteMany({});
     await prisma.category.deleteMany({});
     await prisma.supplier.deleteMany({});
     const newUsage = refreshDiskCache();
-    res.json({ ok: true, message: 'Все данные полностью удалены', diskUsage: newUsage });
+    res.json({ ok: true, message: 'Все данные полностью удалены (принудительно)', diskUsage: newUsage });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка полной очистки: ' + err.message });
   }

@@ -1,13 +1,75 @@
+// ============================================================
+// РАЗДЕЛ 3: СМЕНЫ
+// Файл: backend/src/routes/shifts.js
+// Доступ:
+//   open/close/cash-op/current/x-report — cashier, admin, manager
+//   список смен                         — admin, manager, collector
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
-const { requireRole } = require('../middleware/auth');
+const { requireRole, ROLE_GROUPS } = require('../middleware/auth');
 const prisma = new PrismaClient();
 
-// Открыть смену
+// Отправка Z-отчёта в Telegram
+async function sendShiftReportToTelegram(shift, report, returns) {
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+  if (!BOT_TOKEN || !CHAT_ID) return false;
+
+  const fmt = (n) => new Intl.NumberFormat('ru-RU').format(Math.round(n || 0));
+  const fmtDate = (d) => d ? new Date(d).toLocaleString('ru-RU', { timeZone: 'Asia/Bishkek' }) : '—';
+
+  const returnTotal = returns.reduce((s, r) => s + r.refundAmount, 0);
+  const returnCount = returns.length;
+
+  let text = `📊 *Отчёт по смене #${shift.id}*\n`;
+  text += `🏬 Склад: ${shift.warehouse?.name || '—'}\n`;
+  text += `👤 Кассир: ${shift.cashier?.fullName || '—'}\n`;
+  text += `🕐 Открыта: ${fmtDate(shift.openedAt)}\n`;
+  text += `🕐 Закрыта: ${fmtDate(shift.closedAt || new Date())}\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `🧾 Продаж: *${report.salesCount}* чеков\n`;
+  text += `💵 Наличные: *${fmt(report.cashSales)} сом*\n`;
+  text += `💳 Карта: *${fmt(report.cardSales)} сом*\n`;
+  text += `🏦 Перевод: *${fmt(report.transferSales)} сом*\n`;
+  text += `💰 Итого продаж: *${fmt(report.totalSales)} сом*\n`;
+  text += `━━━━━━━━━━━━━━━━\n`;
+  if (returnCount > 0) {
+    text += `↩️ Возвраты: *${returnCount}* шт. на *${fmt(returnTotal)} сом*\n`;
+  } else {
+    text += `↩️ Возвратов: нет\n`;
+  }
+  text += `━━━━━━━━━━━━━━━━\n`;
+  text += `💼 Касса нач.: ${fmt(report.openingCash)} сом\n`;
+  text += `💼 Касса ожид.: ${fmt(report.expectedCash)} сом\n`;
+  if (shift.closingCash !== null && shift.closingCash !== undefined) {
+    text += `💼 Касса факт.: ${fmt(shift.closingCash)} сом\n`;
+    const diff = shift.closingCash - report.expectedCash;
+    text += `${diff >= 0 ? '✅' : '⚠️'} Разница: ${diff >= 0 ? '+' : ''}${fmt(diff)} сом\n`;
+  }
+  text += `\n✅ Смена закрыта`;
+
+  try {
+    const resp = await fetch(
+      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: CHAT_ID, text, parse_mode: 'Markdown' })
+      }
+    );
+    return resp.ok;
+  } catch (e) {
+    console.error('Telegram send error:', e.message);
+    return false;
+  }
+}
+
+// --- 3.1: Открыть смену (cashier / admin / manager) ---
 router.post('/open', async (req, res) => {
   const { warehouseId, openingCash } = req.body;
 
-  // Проверяем нет ли уже открытой смены
   const existing = await prisma.shift.findFirst({
     where: { warehouseId: +warehouseId, cashierId: req.user.id, status: 'open' }
   });
@@ -25,7 +87,7 @@ router.post('/open', async (req, res) => {
   res.json(shift);
 });
 
-// Текущая открытая смена + X-отчёт (промежуточный)
+// --- 3.2: Текущая открытая смена (cashier / admin / manager / collector) ---
 router.get('/current', async (req, res) => {
   const { warehouseId } = req.query;
   const shift = await prisma.shift.findFirst({
@@ -48,7 +110,7 @@ router.get('/current', async (req, res) => {
   res.json({ shift, report });
 });
 
-// X-отчёт (промежуточный, без закрытия)
+// --- 3.3: X-отчёт (cashier / admin / manager / collector) ---
 router.get('/:id/x-report', async (req, res) => {
   const shift = await prisma.shift.findUnique({
     where: { id: +req.params.id },
@@ -60,7 +122,7 @@ router.get('/:id/x-report', async (req, res) => {
   res.json(buildXReport(shift));
 });
 
-// Кассовая операция (инкассация / расход / пополнение)
+// --- 3.4: Кассовая операция (cashier / admin / manager) ---
 router.post('/:id/cash-op', async (req, res) => {
   const { type, amount, description } = req.body;
   if (!['expense', 'collection', 'deposit'].includes(type)) {
@@ -83,13 +145,18 @@ router.post('/:id/cash-op', async (req, res) => {
   res.json(op);
 });
 
-// Закрыть смену (Z-отчёт)
+// --- 3.5: Закрыть смену / Z-отчёт (cashier / admin / manager) ---
 router.post('/:id/close', async (req, res) => {
   const { closingCash } = req.body;
 
   const shift = await prisma.shift.findUnique({
     where: { id: +req.params.id },
-    include: { sales: true, cashOps: true, warehouse: true, cashier: { select: { fullName: true } } }
+    include: {
+      sales: true,
+      cashOps: true,
+      warehouse: true,
+      cashier: { select: { fullName: true } }
+    }
   });
   if (!shift) return res.status(404).json({ error: 'Смена не найдена' });
   if (shift.status !== 'open') return res.status(400).json({ error: 'Смена уже закрыта' });
@@ -97,23 +164,37 @@ router.post('/:id/close', async (req, res) => {
   const report = buildXReport(shift);
   const expectedCash = report.expectedCash;
   const cashDiff = (closingCash !== undefined ? closingCash : expectedCash) - expectedCash;
+  const closedAt = new Date();
 
   const updated = await prisma.shift.update({
     where: { id: shift.id },
     data: {
       status: 'closed',
-      closedAt: new Date(),
+      closedAt,
       closingCash: closingCash !== undefined ? +closingCash : null,
       expectedCash,
       cashDiff
     }
   });
 
-  res.json({ shift: updated, report, cashDiff, zReport: true });
+  // Получаем возвраты за смену
+  const returns = await prisma.return.findMany({
+    where: { shiftId: shift.id }
+  });
+
+  // Отправка в Telegram сразу при закрытии
+  const shiftWithClosedAt = { ...shift, ...updated, closedAt };
+  const telegramOk = await sendShiftReportToTelegram(shiftWithClosedAt, report, returns);
+
+  if (telegramOk) {
+    await prisma.shift.update({ where: { id: shift.id }, data: { telegramSent: true } });
+  }
+
+  res.json({ shift: updated, report, cashDiff, zReport: true, telegramSent: telegramOk });
 });
 
-// Список смен
-router.get('/', requireRole('admin', 'manager'), async (req, res) => {
+// --- 3.6: Список смен (admin / manager / collector) ---
+router.get('/', requireRole('admin', 'manager', 'collector'), async (req, res) => {
   const { warehouseId } = req.query;
   const shifts = await prisma.shift.findMany({
     where: warehouseId ? { warehouseId: +warehouseId } : {},

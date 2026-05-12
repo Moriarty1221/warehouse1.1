@@ -1,3 +1,9 @@
+// ============================================================
+// РАЗДЕЛ 4: ПРИХОДЫ (ПОСТУПЛЕНИЯ)
+// Файл: backend/src/routes/receipts.js
+// Доступ: admin, manager
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
 const { requireRole } = require('../middleware/auth');
@@ -5,7 +11,8 @@ const { adjustStock, StockError } = require('../services/StockService');
 
 const prisma = new PrismaClient();
 
-router.get('/', async (req, res) => {
+// --- 4.1: Список приходов ---
+router.get('/', requireRole('admin', 'manager'), async (req, res) => {
   const { warehouseId, status } = req.query;
   const where = {};
   if (warehouseId) where.warehouseId = +warehouseId;

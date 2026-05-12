@@ -1,3 +1,9 @@
+// ============================================================
+// РАЗДЕЛ 14: ПОСТАВЩИКИ
+// Файл: backend/src/routes/suppliers.js
+// Доступ: admin, manager
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();

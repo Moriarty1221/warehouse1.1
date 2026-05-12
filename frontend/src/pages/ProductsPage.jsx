@@ -310,7 +310,6 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
       };
 
       if (isEdit) {
-        // Редактирование — одиночный
         await api('/products/'+product.id, { method:'PUT', body:JSON.stringify({
           ...base, sku:form.sku, barcode:form.barcode||null,
           size:form.size||null, isActive:true
@@ -320,7 +319,6 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
       }
 
       if (mode==='single') {
-        // Одиночный новый товар
         const saved = await api('/products', { method:'POST', body:JSON.stringify({
           ...base, sku:form.sku.trim(), barcode:form.barcode||null, size:form.size||null
         })});
@@ -330,23 +328,28 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
         show('Товар добавлен','success');
 
       } else {
-        // Размерная сетка — создаём N товаров
-        const savedProducts = [];
-        for (const row of sizeRows) {
-          const sku = row.sku?.trim() || autoSku(row.size,0);
-          const saved = await api('/products', { method:'POST', body:JSON.stringify({
-            ...base,
-            sku,
-            barcode: row.barcode||null,
+        // Размерная сетка — ОДИН товар с массивом sizes
+        const saved = await api('/products', { method:'POST', body:JSON.stringify({
+          ...base,
+          sku: form.modelCode
+            ? `${form.modelCode.toUpperCase().replace(/\s+/g,'')}-MULTI`
+            : `${form.name.toUpperCase().replace(/\s+/g,'').slice(0,8)}-MULTI`,
+          sizes: sizeRows.map(row => ({
             size: row.size,
-            name: form.name + (form.size?'':` (${row.size})`),
-          })});
-          savedProducts.push({ productId:saved.id, qty:+row.qty||1 });
+            sku: row.sku?.trim() || autoSku(row.size, 0),
+            barcode: row.barcode || null,
+          }))
+        })});
+
+        if (doReceipt && receiptForm.warehouseId && saved?.id) {
+          // Приход по каждому размеру
+          const receiptItems = saved.sizes.map(sz => {
+            const row = sizeRows.find(r => r.size === sz.size);
+            return { productId: saved.id, sizeId: sz.id, qty: row ? +row.qty : 1 };
+          });
+          await doReceiptFor(receiptItems);
         }
-        if (doReceipt && receiptForm.warehouseId) {
-          await doReceiptFor(savedProducts);
-        }
-        show(`Добавлено ${sizeRows.length} размеров ${doReceipt?'+ приход на склад':''}`, 'success');
+        show(`Товар "${form.name}" добавлен с ${sizeRows.length} размерами${doReceipt?' + приход':''}`, 'success');
       }
 
       onSave();
@@ -364,6 +367,7 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
         autoConfirm:true,
         items: items.map(i=>({
           productId:i.productId,
+          sizeId: i.sizeId || null,
           quantity:i.qty,
           costPerUnit:+receiptForm.costPerUnit||+form.costPrice||0
         }))

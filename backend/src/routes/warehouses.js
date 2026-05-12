@@ -1,3 +1,9 @@
+// ============================================================
+// РАЗДЕЛ 13: СКЛАДЫ
+// Файл: backend/src/routes/warehouses.js
+// Доступ: GET — все авторизованные; POST/PUT/DELETE — admin
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
 const { requireRole } = require('../middleware/auth');

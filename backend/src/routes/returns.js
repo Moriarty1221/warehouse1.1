@@ -1,3 +1,9 @@
+// ============================================================
+// РАЗДЕЛ 11: ВОЗВРАТЫ
+// Файл: backend/src/routes/returns.js
+// Доступ: cashier, admin, manager
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
 const { requireRole } = require('../middleware/auth');
@@ -26,11 +32,21 @@ router.post('/', async (req, res) => {
   }
 
   try {
+    // Ищем открытую смену кассира
+    let shiftId = null;
+    if (warehouseId) {
+      const openShift = await prisma.shift.findFirst({
+        where: { warehouseId: +warehouseId, cashierId: req.user.id, status: 'open' }
+      });
+      shiftId = openShift?.id || null;
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       const ret = await tx.return.create({
         data: {
           saleId: saleId ? +saleId : null,
           warehouseId: +warehouseId,
+          shiftId,
           approvedBy: !saleId ? req.user.id : null,
           reason,
           reasonNote,

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Search, AlertTriangle } from 'lucide-react';
 import { api } from '../utils/api';
 import { useAuth } from '../hooks/useAuth.jsx';
+import TelegramReportButton from '../components/TelegramReportButton.jsx';
 
 export default function StockPage() {
   const { user } = useAuth();
@@ -32,6 +33,7 @@ export default function StockPage() {
 
   return (
     <div>
+      <TelegramReportButton />
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="search-bar">
           <Search size={15} className="search-icon" />
