@@ -22,7 +22,7 @@ router.get('/', requireRole('admin', 'manager'), async (req, res) => {
     include: {
       supplier: true, warehouse: true,
       user: { select: { fullName: true } },
-      items: { include: { product: true } }
+      items: { include: { product: true, size: true } }
     },
     orderBy: { date: 'desc' }
   });
@@ -35,37 +35,66 @@ router.post('/', async (req, res) => {
     data: {
       warehouseId, supplierId: supplierId || null,
       userId: req.user.id, notes,
-      items: { create: items.map(i => ({ productId: i.productId, quantity: i.quantity, costPerUnit: i.costPerUnit || 0 })) }
+      items: {
+        create: items.map(i => ({
+          productId: i.productId,
+          sizeId: i.sizeId || null,      // <-- сохраняем sizeId
+          quantity: i.quantity,
+          costPerUnit: i.costPerUnit || 0
+        }))
+      }
     },
-    include: { items: { include: { product: true } } }
+    include: { items: { include: { product: true, size: true } } }
   });
 
-  // Если autoConfirm=true — сразу подтверждаем и зачисляем на остатки
   if (autoConfirm) {
     try {
       await prisma.$transaction(async (tx) => {
         for (const item of receipt.items) {
-          const stock = await tx.stock.findUnique({
-            where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } }
-          });
-          let newAvgCost = item.costPerUnit;
-          if (stock && stock.quantity > 0) {
-            newAvgCost = (stock.quantity * stock.avgCost + item.quantity * item.costPerUnit) / (stock.quantity + item.quantity);
+          if (!item.sizeId) {
+            // Обычный товар без размерной сетки
+            const stock = await tx.stock.findUnique({
+              where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } }
+            });
+            let newAvgCost = item.costPerUnit;
+            if (stock && stock.quantity > 0) {
+              newAvgCost = (stock.quantity * stock.avgCost + item.quantity * item.costPerUnit) / (stock.quantity + item.quantity);
+            }
+            await adjustStock(tx, {
+              productId: item.productId, warehouseId: receipt.warehouseId,
+              delta: item.quantity, type: 'receipt', docType: 'Receipt', docId: receipt.id
+            });
+            await tx.stock.update({
+              where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } },
+              data: { avgCost: newAvgCost }
+            });
+          } else {
+            // Товар с размерами — зачисляем в SizeStock + пересчитываем суммарный Stock
+            await adjustStock(tx, {
+              productId: item.productId, warehouseId: receipt.warehouseId,
+              delta: item.quantity, type: 'receipt', docType: 'Receipt', docId: receipt.id,
+              sizeId: item.sizeId
+            });
+            // avgCost на уровне модели
+            const stock = await tx.stock.findUnique({
+              where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } }
+            });
+            if (stock && stock.quantity > 0) {
+              const prevQty = stock.quantity - item.quantity;
+              const newAvgCost = prevQty > 0
+                ? (stock.avgCost * prevQty + item.quantity * item.costPerUnit) / stock.quantity
+                : item.costPerUnit;
+              await tx.stock.update({
+                where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } },
+                data: { avgCost: newAvgCost }
+              });
+            }
           }
-          await adjustStock(tx, {
-            productId: item.productId, warehouseId: receipt.warehouseId,
-            delta: item.quantity, type: 'receipt', docType: 'Receipt', docId: receipt.id
-          });
-          await tx.stock.update({
-            where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } },
-            data: { avgCost: newAvgCost }
-          });
         }
         await tx.receipt.update({ where: { id: receipt.id }, data: { status: 'confirmed' } });
       });
       return res.json({ ...receipt, status: 'confirmed', autoConfirmed: true });
     } catch (err) {
-      // Приход создан но не подтверждён — вернём как черновик
       return res.json({ ...receipt, confirmError: err.message });
     }
   }
@@ -84,32 +113,53 @@ router.post('/:id/confirm', async (req, res) => {
   try {
     await prisma.$transaction(async (tx) => {
       for (const item of receipt.items) {
-        const stock = await tx.stock.findUnique({
-          where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } }
-        });
-
-        // Пересчёт средней себестоимости (AVCO)
-        let newAvgCost = item.costPerUnit;
-        if (stock && stock.quantity > 0) {
-          newAvgCost = (stock.quantity * stock.avgCost + item.quantity * item.costPerUnit) / (stock.quantity + item.quantity);
+        if (!item.sizeId) {
+          // Обычный товар
+          const stock = await tx.stock.findUnique({
+            where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } }
+          });
+          let newAvgCost = item.costPerUnit;
+          if (stock && stock.quantity > 0) {
+            newAvgCost = (stock.quantity * stock.avgCost + item.quantity * item.costPerUnit) / (stock.quantity + item.quantity);
+          }
+          await adjustStock(tx, {
+            productId: item.productId,
+            warehouseId: receipt.warehouseId,
+            delta: item.quantity,
+            type: 'receipt',
+            docType: 'Receipt',
+            docId: receipt.id
+          });
+          await tx.stock.update({
+            where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } },
+            data: { avgCost: newAvgCost }
+          });
+        } else {
+          // Товар с размером — зачисляем в SizeStock
+          await adjustStock(tx, {
+            productId: item.productId,
+            warehouseId: receipt.warehouseId,
+            delta: item.quantity,
+            type: 'receipt',
+            docType: 'Receipt',
+            docId: receipt.id,
+            sizeId: item.sizeId   // <-- передаём sizeId
+          });
+          const stock = await tx.stock.findUnique({
+            where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } }
+          });
+          if (stock && stock.quantity > 0) {
+            const prevQty = stock.quantity - item.quantity;
+            const newAvgCost = prevQty > 0
+              ? (stock.avgCost * prevQty + item.quantity * item.costPerUnit) / stock.quantity
+              : item.costPerUnit;
+            await tx.stock.update({
+              where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } },
+              data: { avgCost: newAvgCost }
+            });
+          }
         }
-
-        await adjustStock(tx, {
-          productId: item.productId,
-          warehouseId: receipt.warehouseId,
-          delta: item.quantity,
-          type: 'receipt',
-          docType: 'Receipt',
-          docId: receipt.id
-        });
-
-        // Обновляем avgCost отдельно
-        await tx.stock.update({
-          where: { productId_warehouseId: { productId: item.productId, warehouseId: receipt.warehouseId } },
-          data: { avgCost: newAvgCost }
-        });
       }
-
       await tx.receipt.update({ where: { id: receipt.id }, data: { status: 'confirmed' } });
     });
 
@@ -133,7 +183,8 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
           delta: -item.quantity,
           type: 'receipt',
           docType: 'Receipt',
-          docId: r.id
+          docId: r.id,
+          sizeId: item.sizeId || null   // <-- тоже передаём при откате
         });
       }
       await tx.receipt.delete({ where: { id: +req.params.id } });
