@@ -143,8 +143,7 @@ function SizeGridEditor({ sizes, onChange, unit, modelCode, brand, baseName, bas
               <tr style={{ background:'var(--bg3)', borderBottom:'1px solid var(--border)' }}>
                 <th style={{ padding:'7px 10px', textAlign:'left', fontWeight:600, fontSize:11, color:'var(--text3)', width:70 }}>Размер</th>
                 <th style={{ padding:'7px 10px', textAlign:'left', fontWeight:600, fontSize:11, color:'var(--text3)', width:70 }}>Кол-во</th>
-                <th style={{ padding:'7px 10px', textAlign:'left', fontWeight:600, fontSize:11, color:'var(--text3)' }}>SKU</th>
-                <th style={{ padding:'7px 10px', textAlign:'left', fontWeight:600, fontSize:11, color:'var(--text3)' }}>Штрихкод</th>
+
                 <th style={{ width:32 }}></th>
               </tr>
             </thead>
@@ -180,26 +179,8 @@ function SizeGridEditor({ sizes, onChange, unit, modelCode, brand, baseName, bas
                           display:'flex',alignItems:'center',justifyContent:'center' }}>+</button>
                     </div>
                   </td>
-                  <td style={{ padding:'5px 8px' }}>
-                    <input
-                      value={row.sku}
-                      onChange={e=>updateRow(idx,'sku',e.target.value)}
-                      placeholder={autoSku(row.size, sizes.slice(0,idx).filter(r=>r.size===row.size).length)}
-                      style={{ width:'100%',padding:'4px 7px',borderRadius:5,
-                        border:'1px solid var(--border2)',background:'var(--bg)',
-                        color:'var(--text)',fontSize:12,fontFamily:'monospace' }}
-                    />
-                  </td>
-                  <td style={{ padding:'5px 8px' }}>
-                    <input
-                      value={row.barcode||''}
-                      onChange={e=>updateRow(idx,'barcode',e.target.value)}
-                      placeholder="EAN/UPC"
-                      style={{ width:'100%',padding:'4px 7px',borderRadius:5,
-                        border:'1px solid var(--border2)',background:'var(--bg)',
-                        color:'var(--text)',fontSize:12,fontFamily:'monospace' }}
-                    />
-                  </td>
+
+
                   <td style={{ padding:'5px 6px', textAlign:'center' }}>
                     <button type="button" onClick={()=>removeRow(idx)}
                       style={{ width:22,height:22,borderRadius:4,border:'none',
@@ -288,8 +269,6 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
       if (!form.sku?.trim()) e.sku = 'Введите SKU';
     } else {
       if (sizeRows.length===0) e.sizes = 'Добавьте хотя бы один размер';
-      const missingSku = sizeRows.some(r=>!r.sku?.trim());
-      if (missingSku) e.sizes = 'Заполните SKU для всех размеров';
     }
     if (doReceipt && !receiptForm.warehouseId) e.warehouseId='Выберите склад';
     setErrors(e);
@@ -334,10 +313,9 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
           sku: form.modelCode
             ? `${form.modelCode.toUpperCase().replace(/\s+/g,'')}-MULTI`
             : `${form.name.toUpperCase().replace(/\s+/g,'').slice(0,8)}-MULTI`,
-          sizes: sizeRows.map(row => ({
+          sizes: sizeRows.map((row, idx) => ({
             size: row.size,
-            sku: row.sku?.trim() || autoSku(row.size, 0),
-            barcode: row.barcode || null,
+            qty: row.qty,
           }))
         })});
 
