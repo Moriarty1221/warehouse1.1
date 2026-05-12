@@ -2,7 +2,7 @@
 // РАЗДЕЛ 6: ТОВАРЫ
 // Файл: backend/src/routes/products.js
 // Доступ:
-//   GET (просмотр) — admin, manager, inventor
+//   GET (просмотр) — admin, manager, inventor, cashier
 //   POST/PUT/DELETE — admin, manager
 // ============================================================
 
@@ -12,7 +12,7 @@ const { requireRole } = require('../middleware/auth');
 const prisma = new PrismaClient();
 
 // --- 6.1: Список товаров (admin/manager/inventor) ---
-router.get('/', requireRole('admin', 'manager', 'inventor'), async (req, res) => {
+router.get('/', requireRole('admin', 'manager', 'inventor', 'cashier'), async (req, res) => {
   const { categoryId, supplierId, search, modelCode, brand, size, gender, season } = req.query;
   const where = { isActive: true };
   if (categoryId) where.categoryId = +categoryId;
