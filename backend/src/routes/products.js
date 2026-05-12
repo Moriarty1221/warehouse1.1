@@ -2,7 +2,7 @@
 // РАЗДЕЛ 6: ТОВАРЫ
 // Файл: backend/src/routes/products.js
 // Доступ:
-//   GET (просмотр) — admin, manager, inventor, cashier
+//   GET (просмотр) — admin, manager, inventor
 //   POST/PUT/DELETE — admin, manager
 // ============================================================
 
@@ -65,9 +65,28 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
 
   // Если передан массив sizes — создаём товар с размерами (hasMultipleSizes=true)
   if (sizes && sizes.length > 0) {
+    // Базовый SKU модели
+    const baseModelSku = sku?.trim() ||
+      `${(modelCode||brand||'PROD').toUpperCase().replace(/\s+/g,'').slice(0,10)}-MULTI`;
+
+    // ИСПРАВЛЕНО: генерируем уникальный SKU для каждого размера автоматически
+    // Штрихкод (barcode) может быть одинаковым для всех размеров одной модели
+    const sizeSkuCount = {};
+    const sizesData = sizes.map(s => {
+      const sizeKey = String(s.size).toUpperCase().replace(/\s+/g, '');
+      sizeSkuCount[sizeKey] = (sizeSkuCount[sizeKey] || 0) + 1;
+      const suffix = sizeSkuCount[sizeKey] > 1 ? `-${sizeSkuCount[sizeKey]}` : '';
+      const autoSku = `${(modelCode||brand||'PROD').toUpperCase().replace(/\s+/g,'').slice(0,8)}-${sizeKey}${suffix}`;
+      return {
+        size: s.size,
+        sku: s.sku?.trim() || autoSku,
+        barcode: s.barcode?.trim() || barcode || null  // используем общий barcode модели если не задан
+      };
+    });
+
     const product = await prisma.product.create({
       data: {
-        sku: sku || `${(modelCode||brand||'PROD').toUpperCase().replace(/\s+/g,'')}-MULTI`,
+        sku: baseModelSku,
         barcode: barcode || null,
         name,
         modelCode: modelCode || null,
@@ -82,19 +101,9 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
         salePrice: salePrice ? +salePrice : 0,
         description: description || null,
         hasMultipleSizes: true,
-        sizes: {
-          create: sizes.map(s => ({
-            size: s.size,
-            sku: s.sku,
-            barcode: s.barcode || null
-          }))
-        }
+        sizes: { create: sizesData }
       },
-      include: {
-        category: true,
-        supplier: true,
-        sizes: true
-      }
+      include: { category: true, supplier: true, sizes: true }
     });
     return res.json(product);
   }
