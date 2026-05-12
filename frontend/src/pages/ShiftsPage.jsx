@@ -33,13 +33,19 @@ function StatCard({ label, value, sub, color = 'var(--text)' }) {
 }
 
 function OpenShiftModal({ warehouses, onOpen, onClose }) {
-  const [warehouseId, setWarehouseId] = useState(warehouses[0]?.id || '');
+  const { user } = useAuth();
+  // ИСПРАВЛЕНО: кассир получает свой склад автоматически, не может выбрать чужой
+  const isCashier = user?.role === 'cashier';
+  const defaultWarehouse = isCashier && user?.warehouseId
+    ? user.warehouseId
+    : (warehouses[0]?.id || '');
+  const [warehouseId, setWarehouseId] = useState(defaultWarehouse);
   const [openingCash, setOpeningCash] = useState(0);
   const [loading, setLoading] = useState(false);
   const { show } = useToast();
 
   const handle = async () => {
-    if (!warehouseId) return show('Выберите склад', 'error');
+    if (!warehouseId) return show('Склад не назначен. Обратитесь к администратору.', 'error');
     setLoading(true);
     try {
       await api('/shifts/open', { method:'POST', body: JSON.stringify({ warehouseId: +warehouseId, openingCash: +openingCash }) });
@@ -48,6 +54,8 @@ function OpenShiftModal({ warehouses, onOpen, onClose }) {
     } catch(err) { show(err.message, 'error'); }
     finally { setLoading(false); }
   };
+
+  const selectedWarehouse = warehouses.find(w => w.id === +warehouseId);
 
   return (
     <div className="modal-overlay">
@@ -59,9 +67,15 @@ function OpenShiftModal({ warehouses, onOpen, onClose }) {
         <div className="modal-body">
           <div className="form-group">
             <label className="form-label">Склад</label>
-            <select className="form-select" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
-              {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-            </select>
+            {isCashier ? (
+              <div className="form-input" style={{ background:'var(--bg2)', color:'var(--text)', cursor:'default' }}>
+                {selectedWarehouse?.name || 'Склад не назначен'}
+              </div>
+            ) : (
+              <select className="form-select" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
+                {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            )}
           </div>
           <div className="form-group">
             <label className="form-label">Начальная сумма в кассе (сом)</label>
@@ -70,7 +84,7 @@ function OpenShiftModal({ warehouses, onOpen, onClose }) {
         </div>
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Отмена</button>
-          <button className="btn btn-primary" onClick={handle} disabled={loading}>
+          <button className="btn btn-primary" onClick={handle} disabled={loading || (isCashier && !user?.warehouseId)}>
             <Play size={14} /> {loading ? '...' : 'Открыть'}
           </button>
         </div>
