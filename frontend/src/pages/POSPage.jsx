@@ -522,7 +522,7 @@ export default function POSPage() {
               </div>
               {warehouseId && (
                 <div style={{ fontSize: 10, color: hasStock ? 'var(--green)' : 'var(--red)', marginTop: 2 }}>
-                  {hasStock ? `В наличии: ${p.stockQuantity} ${p.unit}` : 'Нет на складе'}
+                  {hasStock ? `В наличии: ${Math.floor(p.stockQuantity)} ${p.unit}` : 'Нет на складе'}
                 </div>
               )}
             </button>
@@ -690,7 +690,7 @@ export default function POSPage() {
                       {sz.size}
                       {warehouseId && (
                         <span style={{ fontSize: 10, fontWeight: 400 }}>
-                          {available ? `${sz.stockQty} шт` : 'нет'}
+                          {available ? `${Math.floor(sz.stockQty)} шт` : 'нет'}
                         </span>
                       )}
                     </button>
