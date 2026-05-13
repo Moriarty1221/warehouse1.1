@@ -1,9 +1,8 @@
 // ============================================================
 // РАЗДЕЛ 6: ТОВАРЫ
 // Файл: backend/src/routes/products.js
-// Доступ:
-//   GET (просмотр) — admin, manager, inventor
-//   POST/PUT/DELETE — admin, manager
+// Архитектура: один товар = одна модель, размеры внутри модели
+// SKU и barcode только у Product, НЕ у ProductSize
 // ============================================================
 
 const router = require('express').Router();
@@ -11,186 +10,194 @@ const { PrismaClient } = require('@prisma/client');
 const { requireRole } = require('../middleware/auth');
 const prisma = new PrismaClient();
 
-// --- 6.1: Список товаров (admin/manager/inventor) ---
+// --- 6.1: Список товаров ---
 router.get('/', requireRole('admin', 'manager', 'inventor', 'cashier'), async (req, res) => {
-  const { categoryId, supplierId, search, modelCode, brand, size, gender, season } = req.query;
-  const where = { isActive: true };
-  if (categoryId) where.categoryId = +categoryId;
-  if (supplierId) where.supplierId = +supplierId;
-  if (modelCode) where.modelCode = modelCode;
-  if (brand) where.brand = brand;
-  if (gender) where.gender = gender;
-  if (season) where.season = season;
-  // size фильтр: если hasMultipleSizes — ищем внутри sizes, иначе product.size
-  if (size) {
-    where.OR = [
-      { size: size },
-      { sizes: { some: { size } } }
-    ];
-  }
-  if (search) {
-    where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { sku: { contains: search, mode: 'insensitive' } },
-      { barcode: { contains: search, mode: 'insensitive' } },
-      { brand: { contains: search, mode: 'insensitive' } },
-      { modelCode: { contains: search, mode: 'insensitive' } },
-      { sizes: { some: { sku: { contains: search, mode: 'insensitive' } } } },
-    ];
-  }
+  try {
+    const { categoryId, supplierId, search, brand, gender, season } = req.query;
+    const where = { isActive: true };
+    if (categoryId) where.categoryId = +categoryId;
+    if (supplierId) where.supplierId = +supplierId;
+    if (brand) where.brand = brand;
+    if (gender) where.gender = gender;
+    if (season) where.season = season;
+    if (search) {
+      where.OR = [
+        { name:      { contains: search, mode: 'insensitive' } },
+        { sku:       { contains: search, mode: 'insensitive' } },
+        { barcode:   { contains: search, mode: 'insensitive' } },
+        { brand:     { contains: search, mode: 'insensitive' } },
+        { modelCode: { contains: search, mode: 'insensitive' } },
+      ];
+    }
 
-  const products = await prisma.product.findMany({
-    where,
-    include: {
-      category: true,
-      supplier: true,
-      stock: { include: { warehouse: true } },
-      sizes: {
-        include: {
-          stock: true
-        },
-        orderBy: { size: 'asc' }
-      }
-    },
-    orderBy: { name: 'asc' }
-  });
-  res.json(products);
+    const products = await prisma.product.findMany({
+      where,
+      include: {
+        category: true,
+        supplier:  true,
+        stock:     { include: { warehouse: true } },
+        sizes: {
+          include: { stock: true },
+          orderBy: { size: 'asc' }
+        }
+      },
+      orderBy: { name: 'asc' }
+    });
+    res.json(products);
+  } catch (err) {
+    console.error('GET /products error:', err);
+    res.status(500).json({ error: 'Ошибка получения товаров' });
+  }
 });
 
-// POST /products — создать товар (с возможностью передать sizes[])
+// --- 6.2: Создать товар ---
+// Payload: { sku, barcode, name, brand, modelCode, ... , sizes: [{size, qty}] }
+// Повторяющиеся размеры объединяются: [{size:'42',qty:1},{size:'42',qty:1}] → size 42, qty 2
 router.post('/', requireRole('admin', 'manager'), async (req, res) => {
-  const { sku, barcode, name, modelCode, brand, size, gender, season,
-          categoryId, supplierId, unit, minStock, costPrice, salePrice,
-          description, sizes } = req.body;
+  try {
+    const { sku, barcode, name, modelCode, brand, gender, season,
+            categoryId, supplierId, unit, minStock, costPrice, salePrice,
+            description, sizes } = req.body;
 
-  // Если передан массив sizes — создаём товар с размерами (hasMultipleSizes=true)
-  if (sizes && sizes.length > 0) {
-    // Базовый SKU модели
-    const baseModelSku = sku?.trim() ||
-      `${(modelCode||brand||'PROD').toUpperCase().replace(/\s+/g,'').slice(0,10)}-MULTI`;
+    if (!name?.trim()) return res.status(400).json({ error: 'Название обязательно' });
+    if (!sku?.trim())  return res.status(400).json({ error: 'SKU обязателен' });
 
-    // Генерируем уникальный SKU для каждого размера автоматически
-    // Штрихкод только у модели (Product), у размеров (ProductSize) штрихкода нет
-    const base = (modelCode||brand||sku||'PROD').toUpperCase().replace(/\s+/g,'').slice(0,10);
-    const ts = Date.now(); // гарантирует уникальность даже при одинаковых размерах
-    const sizeSkuCount = {};
-    const sizesData = sizes.map(s => {
-      const sizeKey = String(s.size).toUpperCase().replace(/\s+/g, '');
-      sizeSkuCount[sizeKey] = (sizeSkuCount[sizeKey] || 0) + 1;
-      const count = sizeSkuCount[sizeKey];
-      // GUCCI-42, GUCCI-42-2, GUCCI-42-3 — уникально даже при повторах
-      const uniqueSku = count === 1
-        ? `${base}-${sizeKey}-${ts}`
-        : `${base}-${sizeKey}-${ts}-${count}`;
-      return {
-        size: s.size,
-        sku: uniqueSku,  // всегда авто, пользователь не вводит SKU для размеров
-      };
+    // Объединяем повторяющиеся размеры: 42+42 → 42 qty:2
+    const sizeMap = {};
+    (sizes || []).forEach(s => {
+      const key = String(s.size).trim();
+      if (!key) return;
+      sizeMap[key] = (sizeMap[key] || 0) + (parseFloat(s.qty) || 1);
     });
+    const uniqueSizes = Object.entries(sizeMap).map(([size, qty]) => ({ size, qty }));
 
     const product = await prisma.product.create({
       data: {
-        sku: baseModelSku,
-        barcode: barcode || null,
-        name,
-        modelCode: modelCode || null,
-        brand: brand || null,
-        gender: gender || null,
-        season: season || null,
-        categoryId: categoryId ? +categoryId : null,
-        supplierId: supplierId ? +supplierId : null,
-        unit: unit || 'пар',
-        minStock: minStock ? +minStock : 0,
-        costPrice: costPrice ? +costPrice : 0,
-        salePrice: salePrice ? +salePrice : 0,
-        description: description || null,
-        hasMultipleSizes: true,
-        sizes: { create: sizesData }
+        sku:             sku.trim(),
+        barcode:         barcode?.trim() || null,
+        name:            name.trim(),
+        modelCode:       modelCode?.trim() || null,
+        brand:           brand?.trim() || null,
+        gender:          gender || null,
+        season:          season || null,
+        categoryId:      categoryId ? +categoryId : null,
+        supplierId:      supplierId ? +supplierId : null,
+        unit:            unit || 'пар',
+        minStock:        minStock ? +minStock : 0,
+        costPrice:       costPrice ? +costPrice : 0,
+        salePrice:       salePrice ? +salePrice : 0,
+        description:     description || null,
+        hasMultipleSizes: uniqueSizes.length > 0,
+        sizes: uniqueSizes.length > 0 ? {
+          create: uniqueSizes.map(s => ({ size: s.size }))
+        } : undefined
       },
-      include: { category: true, supplier: true, sizes: true }
+      include: { category: true, supplier: true, sizes: { include: { stock: true } } }
     });
-    return res.json(product);
+
+    res.json(product);
+  } catch (err) {
+    console.error('POST /products error:', err);
+    if (err.code === 'P2002') {
+      const field = err.meta?.target?.includes('barcode') ? 'Штрихкод' : 'SKU';
+      return res.status(400).json({ error: `${field} уже занят другим товаром` });
+    }
+    res.status(500).json({ error: 'Ошибка создания товара: ' + err.message });
   }
-
-  // Одиночный товар без размерной сетки
-  const product = await prisma.product.create({
-    data: {
-      sku, barcode: barcode || null, name,
-      modelCode: modelCode || null, brand: brand || null,
-      size: size || null, gender: gender || null, season: season || null,
-      categoryId: categoryId ? +categoryId : null, supplierId: supplierId ? +supplierId : null,
-      unit: unit || 'пар',
-      minStock: minStock ? +minStock : 0,
-      costPrice: costPrice ? +costPrice : 0,
-      salePrice: salePrice ? +salePrice : 0,
-      description: description || null,
-      hasMultipleSizes: false
-    },
-    include: { category: true, supplier: true, sizes: true }
-  });
-  res.json(product);
 });
 
-// PUT /products/:id — обновить товар
+// --- 6.3: Обновить товар ---
 router.put('/:id', requireRole('admin', 'manager'), async (req, res) => {
-  const { sku, barcode, name, modelCode, brand, size, gender, season,
-          categoryId, supplierId, unit, minStock, costPrice, salePrice,
-          description, isActive, sizes } = req.body;
+  try {
+    const { sku, barcode, name, modelCode, brand, gender, season,
+            categoryId, supplierId, unit, minStock, costPrice, salePrice,
+            description, isActive } = req.body;
 
-  const product = await prisma.product.update({
-    where: { id: +req.params.id },
-    data: {
-      sku, barcode: barcode || null, name,
-      modelCode: modelCode || null, brand: brand || null,
-      size: size || null, gender: gender || null, season: season || null,
-      categoryId: categoryId ? +categoryId : null,
-      supplierId: supplierId ? +supplierId : null,
-      unit, minStock: +minStock, costPrice: +costPrice, salePrice: +salePrice,
-      description,
-      isActive: isActive !== undefined ? isActive : true
-    },
-    include: { category: true, supplier: true, sizes: { include: { stock: true } } }
-  });
-  res.json(product);
-});
-
-// DELETE /products/:id
-router.delete('/:id', requireRole('admin'), async (req, res) => {
-  await prisma.product.update({ where: { id: +req.params.id }, data: { isActive: false } });
-  res.json({ ok: true });
-});
-
-// GET /products/model/:modelCode
-router.get('/model/:modelCode', async (req, res) => {
-  const { warehouseId } = req.query;
-  const products = await prisma.product.findMany({
-    where: { modelCode: req.params.modelCode, isActive: true },
-    include: {
-      sizes: {
-        include: {
-          stock: warehouseId ? { where: { warehouseId: +warehouseId } } : true
-        }
+    const product = await prisma.product.update({
+      where: { id: +req.params.id },
+      data: {
+        sku:         sku?.trim(),
+        barcode:     barcode?.trim() || null,
+        name:        name?.trim(),
+        modelCode:   modelCode?.trim() || null,
+        brand:       brand?.trim() || null,
+        gender:      gender || null,
+        season:      season || null,
+        categoryId:  categoryId ? +categoryId : null,
+        supplierId:  supplierId ? +supplierId : null,
+        unit,
+        minStock:    +minStock,
+        costPrice:   +costPrice,
+        salePrice:   +salePrice,
+        description,
+        isActive:    isActive !== undefined ? isActive : true
       },
-      stock: warehouseId
-        ? { where: { warehouseId: +warehouseId } }
-        : true
-    },
-    orderBy: { size: 'asc' }
-  });
-  res.json(products);
+      include: { category: true, supplier: true, sizes: { include: { stock: true } } }
+    });
+    res.json(product);
+  } catch (err) {
+    console.error('PUT /products error:', err);
+    if (err.code === 'P2002') {
+      const field = err.meta?.target?.includes('barcode') ? 'Штрихкод' : 'SKU';
+      return res.status(400).json({ error: `${field} уже занят` });
+    }
+    res.status(500).json({ error: 'Ошибка обновления товара' });
+  }
 });
 
-// GET /products/:id/sizes — получить размеры конкретного товара
+// --- 6.4: Деактивировать товар ---
+router.delete('/:id', requireRole('admin'), async (req, res) => {
+  try {
+    await prisma.product.update({ where: { id: +req.params.id }, data: { isActive: false } });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка удаления товара' });
+  }
+});
+
+// --- 6.5: Размеры конкретного товара ---
 router.get('/:id/sizes', async (req, res) => {
-  const { warehouseId } = req.query;
-  const sizes = await prisma.productSize.findMany({
-    where: { productId: +req.params.id },
-    include: {
-      stock: warehouseId ? { where: { warehouseId: +warehouseId } } : true
-    },
-    orderBy: { size: 'asc' }
-  });
-  res.json(sizes);
+  try {
+    const { warehouseId } = req.query;
+    const sizes = await prisma.productSize.findMany({
+      where: { productId: +req.params.id },
+      include: {
+        stock: warehouseId ? { where: { warehouseId: +warehouseId } } : true
+      },
+      orderBy: { size: 'asc' }
+    });
+    res.json(sizes);
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка получения размеров' });
+  }
+});
+
+// --- 6.6: Найти по штрихкоду или SKU (для POS сканера) ---
+router.get('/find/:identifier', async (req, res) => {
+  try {
+    const id = req.params.identifier;
+    const { warehouseId } = req.query;
+    const product = await prisma.product.findFirst({
+      where: {
+        isActive: true,
+        OR: [{ sku: id }, { barcode: id }]
+      },
+      include: {
+        category: true,
+        sizes: {
+          include: {
+            stock: warehouseId ? { where: { warehouseId: +warehouseId } } : true
+          },
+          orderBy: { size: 'asc' }
+        },
+        stock: warehouseId ? { where: { warehouseId: +warehouseId } } : true
+      }
+    });
+    if (!product) return res.status(404).json({ error: 'Товар не найден' });
+    res.json(product);
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка поиска товара' });
+  }
 });
 
 module.exports = router;
