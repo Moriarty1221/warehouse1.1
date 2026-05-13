@@ -101,7 +101,6 @@ model ProductSize {
   inventoryItems InventoryItem[]
   stockMovements StockMovement[]
 
-  @@unique([productId, size])  // один размер на модель, количество хранится в SizeStock
 }
 
 // ─── SizeStock — остатки по размеру на складе ──────────────────────────────
