@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { ClipboardList, Plus, Play, CheckSquare, Scan, Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { ClipboardList, Plus, Play, CheckSquare, Scan, Search, ChevronDown, ChevronUp, Pencil, Trash2 } from 'lucide-react';
 import { api } from '../utils/api';
 import { useToast } from '../hooks/useToast.jsx';
 import { useAuth } from '../hooks/useAuth.jsx';
@@ -76,7 +76,62 @@ function NewInventoryModal({ warehouses, onSave, onClose }) {
   );
 }
 
-function InventoryDetail({ inv, onRefresh }) {
+function EditInventoryModal({ inv, warehouses, onSave, onClose }) {
+  const [warehouseId, setWarehouseId] = useState(inv.warehouseId || warehouses[0]?.id || '');
+  const [type, setType] = useState(inv.type || 'full');
+  const [loading, setLoading] = useState(false);
+  const { show } = useToast();
+
+  const handle = async () => {
+    setLoading(true);
+    try {
+      await api(`/inventory/${inv.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ warehouseId: +warehouseId, type })
+      });
+      show('Инвентаризация обновлена', 'success');
+      onSave();
+    } catch(err) { show(err.message, 'error'); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal" style={{ maxWidth:380 }}>
+        <div className="modal-header">
+          <div className="modal-title">Редактировать инвентаризацию #{inv.id}</div>
+          <button className="btn btn-ghost btn-icon" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-group">
+            <label className="form-label">Склад</label>
+            <select className="form-select" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
+              {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Тип инвентаризации</label>
+            <select className="form-select" value={type} onChange={e => setType(e.target.value)}>
+              <option value="full">Полная (все товары)</option>
+              <option value="partial">Частичная (по категории)</option>
+            </select>
+          </div>
+          <div style={{ padding:'10px 14px', background:'var(--yellow-bg)', border:'1px solid rgba(255,204,0,0.3)', borderRadius:8, fontSize:12, color:'var(--yellow)' }}>
+            При смене склада список позиций будет пересоздан
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Отмена</button>
+          <button className="btn btn-primary" onClick={handle} disabled={loading}>
+            {loading ? '...' : 'Сохранить'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [scanInput, setScanInput] = useState('');
@@ -285,6 +340,7 @@ export default function InventoryPage() {
   const [warehouses, setWarehouses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
+  const [editModal, setEditModal] = useState(null); // inv object or null
   const [expanded, setExpanded] = useState(null);
   const { show } = useToast();
 
@@ -299,6 +355,17 @@ export default function InventoryPage() {
     setInventories(inv);
     setWarehouses(wh);
     setLoading(false);
+  };
+
+  const handleDelete = async (inv, e) => {
+    e.stopPropagation();
+    if (!confirm(`Удалить инвентаризацию #${inv.id}? Это действие нельзя отменить.`)) return;
+    try {
+      await api(`/inventory/${inv.id}`, { method: 'DELETE' });
+      show('Инвентаризация удалена', 'success');
+      if (expanded === inv.id) setExpanded(null);
+      load();
+    } catch(err) { show(err.message, 'error'); }
   };
 
   if (loading) return <div className="loader"><div className="spinner" /></div>;
@@ -334,6 +401,26 @@ export default function InventoryPage() {
                 <span style={{ fontSize:12, color:'var(--text3)' }}>{fmtDate(inv.createdAt || inv.id)}</span>
                 <StatusBadge status={inv.status} />
                 <span style={{ fontSize:12, color:'var(--text3)', marginLeft:'auto' }}>{inv._count?.items || 0} позиций</span>
+                {inv.status === 'draft' && (
+                  <>
+                    <button
+                      className="btn btn-ghost btn-icon"
+                      title="Редактировать"
+                      onClick={e => { e.stopPropagation(); setEditModal(inv); }}
+                      style={{ padding:'4px 6px', color:'var(--text3)' }}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-icon"
+                      title="Удалить"
+                      onClick={e => handleDelete(inv, e)}
+                      style={{ padding:'4px 6px', color:'var(--red)' }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </>
+                )}
                 {expanded === inv.id ? <ChevronUp size={16} style={{ color:'var(--text3)' }} /> : <ChevronDown size={16} style={{ color:'var(--text3)' }} />}
               </div>
               {expanded === inv.id && (
@@ -347,6 +434,7 @@ export default function InventoryPage() {
       )}
 
       {modal && <NewInventoryModal warehouses={warehouses} onSave={() => { setModal(false); load(); }} onClose={() => setModal(false)} />}
+      {editModal && <EditInventoryModal inv={editModal} warehouses={warehouses} onSave={() => { setEditModal(null); load(); }} onClose={() => setEditModal(null)} />}
     </div>
   );
 }
