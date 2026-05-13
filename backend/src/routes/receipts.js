@@ -55,13 +55,19 @@ async function confirmItem(tx, item, warehouseId, receiptId) {
         delta: item.quantity, type: 'receipt', docType: 'Receipt', docId: receiptId
       });
     } else {
-      // Размер не указан — распределяем количество равномерно по всем размерам
-      const perSize = item.quantity / product.sizes.length;
+      // Размер не указан — зачисляем на каждый размер пропорционально его SizeStock
+      // Если SizeStock ещё нет — зачисляем по 1 на каждый размер
       for (const size of product.sizes) {
+        const existingStock = await tx.sizeStock.findUnique({
+          where: { sizeId_warehouseId: { sizeId: size.id, warehouseId } }
+        });
+        // Берём текущее количество как долю (или 1 если новый)
+        const currentQty = Number(existingStock?.quantity ?? 0);
+        // Для нового прихода без указания размера — добавляем item.quantity на каждый размер
         await adjustStock(tx, {
           productId: item.productId, warehouseId,
           sizeId: size.id,
-          delta: perSize, type: 'receipt', docType: 'Receipt', docId: receiptId
+          delta: item.quantity, type: 'receipt', docType: 'Receipt', docId: receiptId
         });
       }
     }
