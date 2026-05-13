@@ -53,55 +53,58 @@ model Category {
   products Product[]
 }
 
-// ProductSize - размеры внутри одного товара (модели)
-model ProductSize {
-  id        Int     @id @default(autoincrement())
-  productId Int
-  size      String
-  sku       String  @unique
-  barcode   String?
-  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  stock     SizeStock[]
-  saleItems SaleItem[]
-  returnItems ReturnItem[]
-  receiptItems ReceiptItem[]
-  inventoryItems InventoryItem[]
-  stockMovements StockMovement[]
+// ─── Product — одна карточка = одна модель обуви ───────────────────────────
+// barcode и sku только здесь, НЕ в ProductSize
+model Product {
+  id               Int             @id @default(autoincrement())
+  sku              String          @unique
+  barcode          String?         @unique
+  name             String
+  modelCode        String?
+  brand            String?
+  gender           String?
+  season           String?
+  categoryId       Int?
+  supplierId       Int?
+  unit             String          @default("пар")
+  minStock         Float           @default(0)
+  costPrice        Float           @default(0)
+  salePrice        Float           @default(0)
+  description      String?
+  isActive         Boolean         @default(true)
+  hasMultipleSizes Boolean         @default(true)
+  category         Category?       @relation(fields: [categoryId], references: [id])
+  supplier         Supplier?       @relation(fields: [supplierId], references: [id])
+  sizes            ProductSize[]
+  stock            Stock[]
+  receiptItems     ReceiptItem[]
+  issueItems       IssueItem[]
+  transferItems    TransferItem[]
+  saleItems        SaleItem[]
+  returnItems      ReturnItem[]
+  stockMovements   StockMovement[]
+  inventoryItems   InventoryItem[]
 }
 
-model Product {
+// ─── ProductSize — размеры внутри модели ───────────────────────────────────
+// НЕТ sku, НЕТ barcode — только размер
+// Повторяющиеся размеры объединяются в один через quantity в SizeStock
+model ProductSize {
   id             Int             @id @default(autoincrement())
-  sku            String          @unique
-  barcode        String?         @unique
-  name           String
-  modelCode      String?
-  brand          String?
-  size           String?
-  gender         String?
-  season         String?
-  categoryId     Int?
-  supplierId     Int?
-  unit           String          @default("пар")
-  minStock       Float           @default(0)
-  costPrice      Float           @default(0)
-  salePrice      Float           @default(0)
-  description    String?
-  isActive       Boolean         @default(true)
-  hasMultipleSizes Boolean       @default(false)
-  category       Category?       @relation(fields: [categoryId], references: [id])
-  supplier       Supplier?       @relation(fields: [supplierId], references: [id])
-  sizes          ProductSize[]
-  stock          Stock[]
-  receiptItems   ReceiptItem[]
-  issueItems     IssueItem[]
-  transferItems  TransferItem[]
+  productId      Int
+  size           String
+  product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stock          SizeStock[]
   saleItems      SaleItem[]
   returnItems    ReturnItem[]
-  stockMovements StockMovement[]
+  receiptItems   ReceiptItem[]
   inventoryItems InventoryItem[]
+  stockMovements StockMovement[]
+
+  @@unique([productId, size])  // один размер на модель, количество хранится в SizeStock
 }
 
-// Остатки по размеру (когда товар с несколькими размерами)
+// ─── SizeStock — остатки по размеру на складе ──────────────────────────────
 model SizeStock {
   id          Int         @id @default(autoincrement())
   sizeId      Int
