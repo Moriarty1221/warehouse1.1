@@ -131,7 +131,7 @@ function EditInventoryModal({ inv, warehouses, onSave, onClose }) {
   );
 }
 
-
+function InventoryDetail({ inv, onRefresh }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [scanInput, setScanInput] = useState('');
@@ -340,7 +340,7 @@ export default function InventoryPage() {
   const [warehouses, setWarehouses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
-  const [editModal, setEditModal] = useState(null); // inv object or null
+  const [editModal, setEditModal] = useState(null);
   const [expanded, setExpanded] = useState(null);
   const { show } = useToast();
 
