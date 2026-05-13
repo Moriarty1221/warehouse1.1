@@ -128,6 +128,69 @@ router.post('/:id/complete', requireRole('admin', 'manager', 'inventor'), async 
   res.json(updated);
 });
 
+// Редактировать инвентаризацию (только draft)
+router.put('/:id', requireRole('admin', 'manager', 'inventor'), async (req, res) => {
+  const inv = await prisma.inventory.findUnique({ where: { id: +req.params.id } });
+  if (!inv) return res.status(404).json({ error: 'Не найдено' });
+  if (inv.status !== 'draft') return res.status(400).json({ error: 'Можно редактировать только черновик' });
+
+  const { warehouseId, type } = req.body;
+
+  // Если сменился склад — пересчитываем items
+  if (warehouseId && +warehouseId !== inv.warehouseId) {
+    await prisma.$transaction(async (tx) => {
+      // Удаляем старые позиции
+      await tx.inventoryItem.deleteMany({ where: { inventoryId: inv.id } });
+
+      // Получаем остатки нового склада
+      const stocks = await tx.stock.findMany({
+        where: { warehouseId: +warehouseId },
+        include: { product: true }
+      });
+
+      // Создаём новые позиции
+      await tx.inventory.update({
+        where: { id: inv.id },
+        data: {
+          warehouseId: +warehouseId,
+          type: type || inv.type,
+          items: {
+            create: stocks.map(s => ({
+              productId: s.productId,
+              expectedQty: s.quantity
+            }))
+          }
+        }
+      });
+    });
+  } else if (type && type !== inv.type) {
+    await prisma.inventory.update({
+      where: { id: inv.id },
+      data: { type }
+    });
+  }
+
+  const updated = await prisma.inventory.findUnique({
+    where: { id: inv.id },
+    include: { warehouse: true, _count: { select: { items: true } } }
+  });
+  res.json(updated);
+});
+
+// Удалить инвентаризацию (только draft)
+router.delete('/:id', requireRole('admin', 'manager', 'inventor'), async (req, res) => {
+  const inv = await prisma.inventory.findUnique({ where: { id: +req.params.id } });
+  if (!inv) return res.status(404).json({ error: 'Не найдено' });
+  if (inv.status !== 'draft') return res.status(400).json({ error: 'Удалять можно только черновик' });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.inventoryItem.deleteMany({ where: { inventoryId: inv.id } });
+    await tx.inventory.delete({ where: { id: inv.id } });
+  });
+
+  res.json({ success: true });
+});
+
 // Список инвентаризаций
 router.get('/', async (req, res) => {
   const { warehouseId } = req.query;
