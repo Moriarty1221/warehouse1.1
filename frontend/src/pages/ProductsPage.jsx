@@ -269,6 +269,7 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
       if (!form.sku?.trim()) e.sku = 'Введите SKU';
     } else {
       if (sizeRows.length===0) e.sizes = 'Добавьте хотя бы один размер';
+
     }
     if (doReceipt && !receiptForm.warehouseId) e.warehouseId='Выберите склад';
     setErrors(e);
@@ -313,9 +314,9 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
           sku: form.modelCode
             ? `${form.modelCode.toUpperCase().replace(/\s+/g,'')}-MULTI`
             : `${form.name.toUpperCase().replace(/\s+/g,'').slice(0,8)}-MULTI`,
-          sizes: sizeRows.map((row, idx) => ({
+          sizes: sizeRows.map(row => ({
             size: row.size,
-            qty: row.qty,
+            qty: parseFloat(row.qty) || 1,
           }))
         })});
 
