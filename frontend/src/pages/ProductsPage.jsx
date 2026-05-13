@@ -311,9 +311,12 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
         // Размерная сетка — ОДИН товар с массивом sizes
         const saved = await api('/products', { method:'POST', body:JSON.stringify({
           ...base,
-          sku: form.modelCode
-            ? `${form.modelCode.toUpperCase().replace(/\s+/g,'')}-MULTI`
-            : `${form.name.toUpperCase().replace(/\s+/g,'').slice(0,8)}-MULTI`,
+          sku: form.sku?.trim() ||
+            (form.modelCode
+              ? `${form.modelCode.toUpperCase().replace(/\s+/g,'')}-MULTI`
+              : `${form.name.toUpperCase().replace(/\s+/g,'').slice(0,8)}-MULTI`),
+          barcode: form.barcode?.trim() || null,
+          warehouseId: receiptForm?.warehouseId || null,
           sizes: sizeRows.map(row => ({
             size: row.size,
             qty: parseFloat(row.qty) || 1,
@@ -483,11 +486,7 @@ function ProductModal({ product, categories, suppliers, warehouses, onSave, onCl
                   {['пар','шт','кг','г','л','мл','м','упак','коробка'].map(u=><option key={u}>{u}</option>)}
                 </select>
               </div>
-              <div className="form-group">
-                <label className="form-label">Мин. остаток</label>
-                <input type="number" className="form-input" value={form.minStock} min={0}
-                  onChange={e=>f('minStock',e.target.value)}/>
-              </div>
+  
             </div>
 
             {/* Цены */}
