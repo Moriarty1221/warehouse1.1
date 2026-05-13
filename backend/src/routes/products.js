@@ -57,7 +57,7 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
   try {
     const { sku, barcode, name, modelCode, brand, gender, season,
             categoryId, supplierId, unit, minStock, costPrice, salePrice,
-            description, sizes } = req.body;
+            description, sizes, warehouseId } = req.body;
 
     if (!name?.trim()) return res.status(400).json({ error: 'Название обязательно' });
     if (!sku?.trim())  return res.status(400).json({ error: 'SKU обязателен' });
