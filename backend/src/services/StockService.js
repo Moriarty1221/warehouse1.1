@@ -8,10 +8,11 @@ class StockError extends Error {
 }
 
 // adjustStock — списывает/добавляет остаток
-// Если передан sizeId — работает с SizeStock, иначе со Stock
+// sizeId → работает с SizeStock и обновляет суммарный Stock
+// без sizeId → работает только со Stock
 async function adjustStock(tx, { productId, warehouseId, delta, type, docType, docId, sizeId }) {
   if (sizeId) {
-    // Остаток по размеру
+    // --- Остаток по размеру ---
     const rows = await tx.$queryRaw`
       SELECT id, quantity, "avgCost", reserved
       FROM "SizeStock"
@@ -19,7 +20,7 @@ async function adjustStock(tx, { productId, warehouseId, delta, type, docType, d
       FOR UPDATE NOWAIT
     `;
 
-    const current = rows[0]?.quantity ?? 0;
+    const current = Number(rows[0]?.quantity ?? 0);
     const newQty = current + delta;
 
     if (newQty < 0) {
@@ -28,8 +29,8 @@ async function adjustStock(tx, { productId, warehouseId, delta, type, docType, d
         include: { product: { select: { name: true } } }
       });
       throw new StockError(
-        `Недостаточно остатков: "${size?.product?.name}" размер ${size?.size} (нужно ${-delta}, есть ${current})`,
-        { sizeId, warehouseId, current, needed: -delta }
+        `Недостаточно остатков: "${size?.product?.name}" размер ${size?.size} (нужно ${Math.abs(delta)}, есть ${current})`,
+        { sizeId, warehouseId, current, needed: Math.abs(delta) }
       );
     }
 
@@ -43,41 +44,32 @@ async function adjustStock(tx, { productId, warehouseId, delta, type, docType, d
       await tx.sizeStock.create({ data: { sizeId, warehouseId, quantity: newQty } });
     }
 
-    // Обновляем суммарный Stock для product — считаем сумму всех SizeStock
-    // ВАЖНО: после update/create выше данные уже обновлены, поэтому просто суммируем
+    // Пересчитываем суммарный Stock из всех SizeStock
     const allSizeStock = await tx.sizeStock.findMany({
       where: { size: { productId }, warehouseId }
     });
-    const totalQty = allSizeStock.reduce((s, r) => s + r.quantity, 0);
+    const totalQty = allSizeStock.reduce((s, r) => s + Number(r.quantity), 0);
 
-    const existingStock = await tx.stock.findUnique({
-      where: { productId_warehouseId: { productId, warehouseId } }
+    await tx.stock.upsert({
+      where: { productId_warehouseId: { productId, warehouseId } },
+      update: { quantity: totalQty },
+      create: { productId, warehouseId, quantity: totalQty }
     });
-    if (existingStock) {
-      await tx.stock.update({
-        where: { productId_warehouseId: { productId, warehouseId } },
-        data: { quantity: totalQty }  // <-- исправлено: просто totalQty, не totalQty+delta
-      });
-    } else {
-      await tx.stock.create({
-        data: { productId, warehouseId, quantity: totalQty }
-      });
-    }
 
     await tx.stockMovement.create({
       data: {
         productId, warehouseId, sizeId, delta, type,
         docType: docType ?? null,
-        docId: docId ?? null,
+        docId:   docId   ?? null,
         balanceBefore: current,
-        balanceAfter: newQty
+        balanceAfter:  newQty
       }
     });
 
     return { balanceBefore: current, balanceAfter: newQty };
   }
 
-  // Обычный товар без размеров
+  // --- Обычный товар без размеров ---
   const rows = await tx.$queryRaw`
     SELECT id, quantity, "avgCost", reserved
     FROM "Stock"
@@ -85,14 +77,14 @@ async function adjustStock(tx, { productId, warehouseId, delta, type, docType, d
     FOR UPDATE NOWAIT
   `;
 
-  const current = rows[0]?.quantity ?? 0;
+  const current = Number(rows[0]?.quantity ?? 0);
   const newQty = current + delta;
 
   if (newQty < 0) {
-    const prod = await tx.product.findUnique({ where: { id: productId }, select: { name: true, sku: true } });
+    const prod = await tx.product.findUnique({ where: { id: productId }, select: { name: true } });
     throw new StockError(
-      `Недостаточно остатков: "${prod?.name}" (нужно ${-delta}, есть ${current})`,
-      { productId, warehouseId, current, needed: -delta }
+      `Недостаточно остатков: "${prod?.name}" (нужно ${Math.abs(delta)}, есть ${current})`,
+      { productId, warehouseId, current, needed: Math.abs(delta) }
     );
   }
 
@@ -110,9 +102,9 @@ async function adjustStock(tx, { productId, warehouseId, delta, type, docType, d
     data: {
       productId, warehouseId, delta, type,
       docType: docType ?? null,
-      docId: docId ?? null,
+      docId:   docId   ?? null,
       balanceBefore: current,
-      balanceAfter: newQty
+      balanceAfter:  newQty
     }
   });
 
