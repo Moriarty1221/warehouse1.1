@@ -71,28 +71,59 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
     });
     const uniqueSizes = Object.entries(sizeMap).map(([size, qty]) => ({ size, qty }));
 
-    const product = await prisma.product.create({
-      data: {
-        sku:             sku.trim(),
-        barcode:         barcode?.trim() || null,
-        name:            name.trim(),
-        modelCode:       modelCode?.trim() || null,
-        brand:           brand?.trim() || null,
-        gender:          gender || null,
-        season:          season || null,
-        categoryId:      categoryId ? +categoryId : null,
-        supplierId:      supplierId ? +supplierId : null,
-        unit:            unit || 'пар',
-        minStock:        minStock ? +minStock : 0,
-        costPrice:       costPrice ? +costPrice : 0,
-        salePrice:       salePrice ? +salePrice : 0,
-        description:     description || null,
-        hasMultipleSizes: uniqueSizes.length > 0,
-        sizes: uniqueSizes.length > 0 ? {
-          create: uniqueSizes.map(s => ({ size: s.size }))
-        } : undefined
-      },
-      include: { category: true, supplier: true, sizes: { include: { stock: true } } }
+    // warehouseId нужен для создания SizeStock сразу при добавлении товара
+    const wId = warehouseId ? +warehouseId : null;
+
+    const product = await prisma.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: {
+          sku:             sku.trim(),
+          barcode:         barcode?.trim() || null,
+          name:            name.trim(),
+          modelCode:       modelCode?.trim() || null,
+          brand:           brand?.trim() || null,
+          gender:          gender || null,
+          season:          season || null,
+          categoryId:      categoryId ? +categoryId : null,
+          supplierId:      supplierId ? +supplierId : null,
+          unit:            unit || 'пар',
+          minStock:        minStock ? +minStock : 0,
+          costPrice:       costPrice ? +costPrice : 0,
+          salePrice:       salePrice ? +salePrice : 0,
+          description:     description || null,
+          hasMultipleSizes: uniqueSizes.length > 0,
+          sizes: uniqueSizes.length > 0 ? {
+            create: uniqueSizes.map(s => ({ size: s.size }))
+          } : undefined
+        },
+        include: { category: true, supplier: true, sizes: { include: { stock: true } } }
+      });
+
+      // ИСПРАВЛЕНО: сразу создаём SizeStock и Stock если передан warehouseId и qty > 0
+      if (wId && uniqueSizes.length > 0) {
+        const totalQty = uniqueSizes.reduce((s, x) => s + x.qty, 0);
+        for (const size of created.sizes) {
+          const sizeData = uniqueSizes.find(u => u.size === size.size);
+          const qty = sizeData?.qty || 0;
+          if (qty > 0) {
+            await tx.sizeStock.create({
+              data: { sizeId: size.id, warehouseId: wId, quantity: qty, avgCost: costPrice ? +costPrice : 0 }
+            });
+          }
+        }
+        // Суммарный Stock для товара
+        await tx.stock.upsert({
+          where: { productId_warehouseId: { productId: created.id, warehouseId: wId } },
+          update: { quantity: { increment: totalQty } },
+          create: { productId: created.id, warehouseId: wId, quantity: totalQty, avgCost: costPrice ? +costPrice : 0 }
+        });
+      }
+
+      // Перечитываем с актуальными остатками
+      return tx.product.findUnique({
+        where: { id: created.id },
+        include: { category: true, supplier: true, sizes: { include: { stock: true } } }
+      });
     });
 
     res.json(product);
