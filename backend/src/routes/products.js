@@ -140,15 +140,39 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
 // --- 6.3: Обновить товар ---
 router.put('/:id', requireRole('admin', 'manager'), async (req, res) => {
   try {
+    const id = +req.params.id;
     const { sku, barcode, name, modelCode, brand, gender, season,
             categoryId, supplierId, unit, minStock, costPrice, salePrice,
             description, isActive } = req.body;
 
+    const newSku     = sku?.trim();
+    const newBarcode = barcode?.trim() || null;
+
+    // Проверяем уникальность SKU — только если он реально принадлежит ДРУГОМУ товару
+    if (newSku) {
+      const skuConflict = await prisma.product.findFirst({
+        where: { sku: newSku, id: { not: id } }
+      });
+      if (skuConflict) {
+        return res.status(400).json({ error: 'SKU уже занят другим товаром' });
+      }
+    }
+
+    // Проверяем уникальность штрихкода — только если он реально принадлежит ДРУГОМУ товару
+    if (newBarcode) {
+      const barcodeConflict = await prisma.product.findFirst({
+        where: { barcode: newBarcode, id: { not: id } }
+      });
+      if (barcodeConflict) {
+        return res.status(400).json({ error: 'Штрихкод уже занят другим товаром' });
+      }
+    }
+
     const product = await prisma.product.update({
-      where: { id: +req.params.id },
+      where: { id },
       data: {
-        sku:         sku?.trim(),
-        barcode:     barcode?.trim() || null,
+        sku:         newSku,
+        barcode:     newBarcode,
         name:        name?.trim(),
         modelCode:   modelCode?.trim() || null,
         brand:       brand?.trim() || null,
