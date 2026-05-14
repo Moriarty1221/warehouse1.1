@@ -1,44 +1,88 @@
+// ============================================================
+// РАЗДЕЛ 6: ТОВАРЫ (новая архитектура)
+// ============================================================
+
 const router = require('express').Router();
 const { PrismaClient } = require('@prisma/client');
 const { requireRole } = require('../middleware/auth');
 const prisma = new PrismaClient();
 
 const POPULAR_MODELS = [
-  "GUCCI", "T10", "HERMESS КРОСС", "ADIDAS ТП", "UNCLOUD", "MIU1", "MIU2",
+  "GUCCI", "T10", "HERMESS КРОСС", "ADIDAS ТП", "UNCLOUD", "MIU",
   "CHANEL", "RICK OWENS", "VENETA", "NEW BALANCE", "SUPER STAR",
   "NIKE КЕДЫ 1", "NIKE КЕДЫ 2", "NIKE СЕТКА", "ADIDAS КЕДЫ", "HERMES КЕДЫ"
 ];
 
-// Получить все товары
 router.get('/', requireRole('admin', 'manager', 'inventor', 'cashier'), async (req, res) => {
   const products = await prisma.product.findMany({
     where: { isActive: true },
     include: {
       sizes: { orderBy: { size: 'asc' } },
-      category: true,
-      supplier: true
+      category: true
     },
     orderBy: { name: 'asc' }
   });
   res.json(products);
 });
 
-// Создать / обновить товар
 router.post('/', requireRole('admin', 'manager'), async (req, res) => {
-  const { sku, name, brand, categoryId, supplierId, salePrice, costPrice, description, sizes } = req.body;
+  const { sku, name, brand, salePrice = 0, costPrice = 0, sizes } = req.body;
 
   if (!sku || !name) return res.status(400).json({ error: 'SKU и название обязательны' });
 
   const product = await prisma.$transaction(async (tx) => {
-    let p = await tx.product.upsert({
-      where: { sku },
-      update: { name, brand, categoryId: categoryId ? +categoryId : null, supplierId, salePrice: salePrice || 0, costPrice: costPrice || 0, description },
-      create: { sku, name, brand, categoryId: categoryId ? +categoryId : null, supplierId, salePrice: salePrice || 0, costPrice: costPrice || 0, description }
+    const created = await tx.product.upsert({
+      where: { sku: sku.trim().toUpperCase() },
+      update: { name, brand, salePrice: +salePrice, costPrice: +costPrice },
+      create: { 
+        sku: sku.trim().toUpperCase(), 
+        name, 
+        brand, 
+        salePrice: +salePrice, 
+        costPrice: +costPrice 
+      }
     });
 
-    // Обработка размеров (авто-объединение)
-    if (sizes && sizes.length) {
-      await tx.productSize.deleteMany({ where: { productId: p.id } });
+    // Удаляем старые размеры и создаём новые
+    await tx.productSize.deleteMany({ where: { productId: created.id } });
+
+    if (sizes && sizes.length > 0) {
+      const sizeMap = {};
+      sizes.forEach(s => {
+        const key = String(s.size).trim();
+        if (key) sizeMap[key] = (sizeMap[key] || 0) + (+s.quantity || 0);
+      });
+
+      for (const [size, quantity] of Object.entries(sizeMap)) {
+        if (quantity > 0) {
+          await tx.productSize.create({
+            data: { productId: created.id, size, quantity: +quantity }
+          });
+        }
+      }
+    }
+
+    return tx.product.findUnique({
+      where: { id: created.id },
+      include: { sizes: true }
+    });
+  });
+
+  res.json(product);
+});
+
+router.put('/:id', requireRole('admin', 'manager'), async (req, res) => {
+  const { name, brand, salePrice, costPrice, sizes } = req.body;
+  const id = +req.params.id;
+
+  const product = await prisma.$transaction(async (tx) => {
+    await tx.product.update({
+      where: { id },
+      data: { name, brand, salePrice: +salePrice, costPrice: +costPrice }
+    });
+
+    if (sizes) {
+      await tx.productSize.deleteMany({ where: { productId: id } });
 
       const sizeMap = {};
       sizes.forEach(s => {
@@ -46,19 +90,14 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
         if (key) sizeMap[key] = (sizeMap[key] || 0) + (+s.quantity || 0);
       });
 
-      for (const [size, qty] of Object.entries(sizeMap)) {
-        if (qty > 0) {
-          await tx.productSize.create({
-            data: { productId: p.id, size, quantity: qty }
-          });
+      for (const [size, quantity] of Object.entries(sizeMap)) {
+        if (quantity > 0) {
+          await tx.productSize.create({ data: { productId: id, size, quantity: +quantity } });
         }
       }
     }
 
-    return tx.product.findUnique({
-      where: { id: p.id },
-      include: { sizes: true, category: true }
-    });
+    return tx.product.findUnique({ where: { id }, include: { sizes: true } });
   });
 
   res.json(product);
