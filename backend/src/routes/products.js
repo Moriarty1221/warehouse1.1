@@ -148,7 +148,7 @@ router.put('/:id', requireRole('admin', 'manager'), async (req, res) => {
     const newSku     = sku?.trim();
     const newBarcode = barcode?.trim() || null;
 
-    // Проверяем уникальность SKU — только если он реально принадлежит ДРУГОМУ товару
+    // Проверяем уникальность SKU — только если занят ДРУГИМ товаром
     if (newSku) {
       const skuConflict = await prisma.product.findFirst({
         where: { sku: newSku, id: { not: id } }
@@ -158,7 +158,7 @@ router.put('/:id', requireRole('admin', 'manager'), async (req, res) => {
       }
     }
 
-    // Проверяем уникальность штрихкода — только если он реально принадлежит ДРУГОМУ товару
+    // Проверяем уникальность штрихкода — только если занят ДРУГИМ товаром
     if (newBarcode) {
       const barcodeConflict = await prisma.product.findFirst({
         where: { barcode: newBarcode, id: { not: id } }
