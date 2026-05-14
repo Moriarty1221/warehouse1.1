@@ -103,11 +103,17 @@ router.post('/clear', requireRole('admin'), async (req, res) => {
       cleared.auditLog = r.count;
     }
     if (clearReceipts) {
-      const r = await prisma.receipt.deleteMany({ where: { status: 'confirmed', ...dateFilter } });
+      const toDelete = await prisma.receipt.findMany({ where: { status: 'confirmed', ...dateFilter }, select: { id: true } });
+      const ids = toDelete.map(r => r.id);
+      await prisma.receiptItem.deleteMany({ where: { receiptId: { in: ids } } });
+      const r = await prisma.receipt.deleteMany({ where: { id: { in: ids } } });
       cleared.receipts = r.count;
     }
     if (clearIssues) {
-      const r = await prisma.issue.deleteMany({ where: { status: 'confirmed', ...dateFilter } });
+      const toDelete = await prisma.issue.findMany({ where: { status: 'confirmed', ...dateFilter }, select: { id: true } });
+      const ids = toDelete.map(i => i.id);
+      await prisma.issueItem.deleteMany({ where: { issueId: { in: ids } } });
+      const r = await prisma.issue.deleteMany({ where: { id: { in: ids } } });
       cleared.issues = r.count;
     }
     if (clearStock) {

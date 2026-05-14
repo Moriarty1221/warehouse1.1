@@ -28,29 +28,59 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
 router.post('/:id/confirm', requireRole('admin', 'manager'), async (req, res) => {
   const transfer = await prisma.transfer.findUnique({
     where: { id: +req.params.id },
-    include: { items: true }
+    include: { items: { include: { size: true } } }
   });
+
+  if (!transfer) return res.status(404).json({ error: 'Перемещение не найдено' });
+  if (transfer.status !== 'draft') return res.status(400).json({ error: 'Уже подтверждено' });
 
   await prisma.$transaction(async (tx) => {
     for (const item of transfer.items) {
-      // Списание с отправителя
+      // Списание с отправителя (ProductSize.quantity отражает остаток на складе-источнике)
       await tx.productSize.update({
         where: { id: item.sizeId },
         data: { quantity: { decrement: item.sentQty } }
       });
 
-      // Приход на получателя (upsert)
-      await tx.productSize.upsert({
-        where: { id: item.sizeId }, // если sizeId существует
+      // Приход на склад получателя — ищем или создаём ProductSize для целевого склада.
+      // ProductSize в данной схеме не привязан к складу напрямую,
+      // поэтому используем SizeStock для учёта остатков по складам.
+      await tx.sizeStock.upsert({
+        where: {
+          sizeId_warehouseId: {
+            sizeId: item.sizeId,
+            warehouseId: transfer.toWarehouseId
+          }
+        },
         update: { quantity: { increment: item.sentQty } },
         create: {
-          productId: item.productId,
-          size: (await tx.productSize.findUnique({where:{id:item.sizeId}})).size,
+          sizeId: item.sizeId,
+          warehouseId: transfer.toWarehouseId,
           quantity: item.sentQty
         }
       });
+
+      // Уменьшаем остаток на складе-отправителе в SizeStock
+      await tx.sizeStock.upsert({
+        where: {
+          sizeId_warehouseId: {
+            sizeId: item.sizeId,
+            warehouseId: transfer.fromWarehouseId
+          }
+        },
+        update: { quantity: { decrement: item.sentQty } },
+        create: {
+          sizeId: item.sizeId,
+          warehouseId: transfer.fromWarehouseId,
+          quantity: 0
+        }
+      });
     }
-    await tx.transfer.update({ where: { id: transfer.id }, data: { status: 'confirmed' } });
+
+    await tx.transfer.update({
+      where: { id: transfer.id },
+      data: { status: 'confirmed' }
+    });
   });
 
   res.json({ ok: true });

@@ -21,8 +21,11 @@ router.post('/sale', requireRole('admin', 'manager', 'cashier'), async (req, res
           include: { product: true }
         });
 
-        if (!sizeRecord || sizeRecord.quantity < item.quantity) {
-          throw new Error(`Недостаточно товара ${sizeRecord.product.name} размер ${sizeRecord.size}`);
+        if (!sizeRecord) {
+          throw new Error(`Размер не найден (sizeId=${item.sizeId})`);
+        }
+        if (sizeRecord.quantity < item.quantity) {
+          throw new Error(`Недостаточно товара: ${sizeRecord.product.name} размер ${sizeRecord.size} (есть ${sizeRecord.quantity}, нужно ${item.quantity})`);
         }
 
         const total = item.quantity * item.salePrice;

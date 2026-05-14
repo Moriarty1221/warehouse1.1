@@ -270,7 +270,7 @@ router.post('/telegram', async (req, res) => {
 // Продажи по размерам
 router.get('/analytics/sales-by-size', async (req, res) => {
   const { warehouseId, from, to } = req.query;
-  const where = { status: 'completed' };
+  const where = {};
   if (warehouseId) where.warehouseId = +warehouseId;
   if (from || to) {
     where.createdAt = {};
@@ -280,13 +280,14 @@ router.get('/analytics/sales-by-size', async (req, res) => {
 
   const items = await prisma.saleItem.findMany({
     where: { sale: where },
-    include: { product: { select: { size: true, brand: true, name: true, salePrice: true } }, sale: { select: { createdAt: true } } }
+    include: { product: { select: { brand: true, name: true, salePrice: true } }, size: { select: { size: true } }, sale: { select: { createdAt: true } } }
   });
 
   const bySize = {};
   for (const item of items) {
-    const key = `${item.product.size || 'н/д'} | ${item.product.brand || ''}`;
-    if (!bySize[key]) bySize[key] = { size: item.product.size, brand: item.product.brand, qty: 0, revenue: 0 };
+    const sizeName = item.size?.size || 'н/д';
+    const key = `${sizeName} | ${item.product.brand || ''}`;
+    if (!bySize[key]) bySize[key] = { size: sizeName, brand: item.product.brand, qty: 0, revenue: 0 };
     bySize[key].qty += item.quantity;
     bySize[key].revenue += item.total;
   }
@@ -297,19 +298,19 @@ router.get('/analytics/sales-by-size', async (req, res) => {
 // Маржинальность по SKU
 router.get('/analytics/margin', async (req, res) => {
   const { warehouseId, from, to } = req.query;
-  const where = { status: 'completed' };
+  const where = {};
   if (warehouseId) where.warehouseId = +warehouseId;
 
   const items = await prisma.saleItem.findMany({
     where: { sale: where },
-    include: { product: { select: { sku: true, name: true, brand: true, size: true } } }
+    include: { product: { select: { sku: true, name: true, brand: true } }, size: { select: { size: true } } }
   });
 
   const byProduct = {};
   for (const item of items) {
     const key = item.productId;
     if (!byProduct[key]) {
-      byProduct[key] = { productId: key, sku: item.product.sku, name: item.product.name, brand: item.product.brand, size: item.product.size, qty: 0, revenue: 0, cost: 0, margin: 0 };
+      byProduct[key] = { productId: key, sku: item.product.sku, name: item.product.name, brand: item.product.brand, size: item.size?.size || null, qty: 0, revenue: 0, cost: 0, margin: 0 };
     }
     byProduct[key].qty += item.quantity;
     byProduct[key].revenue += item.total;
@@ -348,7 +349,6 @@ router.get('/analytics/slow-movers', async (req, res) => {
       sku: s.product.sku,
       name: s.product.name,
       brand: s.product.brand,
-      size: s.product.size,
       warehouse: s.warehouse.name,
       stockQty: s.quantity,
       soldQty: soldMap[s.productId] || 0,
@@ -620,8 +620,8 @@ router.post('/telegram/inventor', requireRole('admin', 'manager', 'inventor'), a
   let lines = '';
 
   for (const inv of inventories) {
-    const discrepancies = inv.items.filter(i => i.actualQuantity !== null && i.actualQuantity !== i.systemQuantity);
-    const diff = discrepancies.reduce((s, i) => s + (i.actualQuantity - i.systemQuantity), 0);
+    const discrepancies = inv.items.filter(i => i.actualQty !== null && i.actualQty !== i.expectedQty);
+    const diff = discrepancies.reduce((s, i) => s + ((i.actualQty ?? i.expectedQty) - i.expectedQty), 0);
     totalDiscrepancy += diff;
 
     lines += `\n🔹 Склад: ${inv.warehouse?.name} (${inv.type})\n`;
